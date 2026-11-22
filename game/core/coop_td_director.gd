@@ -106,17 +106,24 @@ func setup_stage(stage: Dictionary, meta_prog: MetaProgress = null) -> void:
 	engine.register_creep_def("boss_obsidian",{"hp": 540.0, "speed": 18.0, "armor": 16.0, "magic_resist": 0.25, "bounty": 140, "life_cost": 6})
 
 	# Waves
-	wave_dir.setup(stage_def.get("waves", []))
-	wave_dir.spawn_requested.connect(func(eid: String, lid: String): engine.spawn_creep(eid, lid))
-	wave_dir.all_waves_completed.connect(func(): all_waves_done = true)
+	for wdef in stage_def.get("waves", []):
+		wave_dir.register_wave(wdef as Dictionary)
+	wave_dir.enemy_spawn_requested.connect(func(eid: String, lid: String, _wi: int): engine.spawn_creep(eid, lid))
+	wave_dir.all_waves_finished.connect(func(): all_waves_done = true)
 
 	# Split bounty 50/50 + charge Synchro Ultimate on every kill!
 	engine.creep_killed.connect(_on_creep_killed)
 	engine.tower_fired.connect(_on_tower_fired)
 
 	# Setup Dual Playable Heroes (P1 & P2)
-	commander_p1.setup_hero(engine, Vector2(345, 108), {"name": "P1苍穹游侠", "hp": 140.0 * guard_hp_mult, "atk": 16.0})
-	commander_p2.setup_hero(engine, Vector2(345, 162), {"name": "P2绯红圣骑", "hp": 165.0 * guard_hp_mult, "atk": 14.0})
+	var h1 := commander_p1.setup_hero(engine, Vector2(345, 108), "P1苍穹游侠")
+	h1["uid"] = "td_hero_p1"
+	h1["max_hp"] = 140.0 * guard_hp_mult
+	h1["hp"] = h1["max_hp"]
+	var h2 := commander_p2.setup_hero(engine, Vector2(345, 162), "P2绯红圣骑")
+	h2["uid"] = "td_hero_p2"
+	h2["max_hp"] = 165.0 * guard_hp_mult
+	h2["hp"] = h2["max_hp"]
 
 
 func _on_creep_killed(creep: Dictionary, bounty: int) -> void:
