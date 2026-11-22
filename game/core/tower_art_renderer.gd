@@ -50,15 +50,29 @@ static func draw_biome_backdrop(canvas: CanvasItem, biome: String, t: float, mea
 			for tx in range(0, 480, 32):
 				for ty in range(28, 240, 32):
 					canvas.draw_texture_rect(meadow_tex, Rect2(Vector2(tx, ty), Vector2(32, 32)), false)
-		# Animated Shimmering Emerald River cutting through x = 165..205
-		canvas.draw_rect(Rect2(162, 28, 46, 210), Color(0.32, 0.24, 0.16)) # riverbank
-		canvas.draw_rect(Rect2(166, 28, 38, 210), Color(0.14, 0.44, 0.68))
-		canvas.draw_rect(Rect2(174, 28, 22, 210), Color(0.20, 0.56, 0.78))
-		for ry in range(36, 232, 18):
-			var off := fmod(t * 22.0 + float(ry), 18.0)
-			var wy := 30.0 + fmod(float(ry) + off, 204.0)
-			canvas.draw_line(Vector2(172, wy), Vector2(184, wy), Color(0.75, 0.94, 1.0, 0.55), 1.4)
-			canvas.draw_line(Vector2(186, wy + 5), Vector2(198, wy + 5), Color(0.75, 0.94, 1.0, 0.45), 1.2)
+		# Organic Gently-Winding Shimmering Emerald River (x ~ 170..202)
+		var bank_pts := PackedVector2Array()
+		var shore_pts := PackedVector2Array()
+		var deep_pts := PackedVector2Array()
+		for ry_i in range(0, 16):
+			var y := 28.0 + float(ry_i) * 14.5
+			var cx := 184.0 + sin(float(ry_i) * 0.45) * 6.5
+			bank_pts.append(Vector2(cx, y))
+			shore_pts.append(Vector2(cx, y))
+			deep_pts.append(Vector2(cx, y))
+		canvas.draw_polyline(bank_pts, Color(0.14, 0.24, 0.14), 48.0) # lush riverbank moss
+		canvas.draw_polyline(bank_pts, Color(0.46, 0.36, 0.22), 42.0) # sandy pebble shore
+		canvas.draw_polyline(shore_pts, Color(0.18, 0.56, 0.76), 34.0) # turquoise shallows
+		canvas.draw_polyline(deep_pts, Color(0.11, 0.38, 0.62), 20.0) # deep emerald-blue channel
+		# Animated pixel water sparkles & lily pads
+		for ry in range(36, 232, 16):
+			var wy := 32.0 + fmod(float(ry) + t * 18.0, 202.0)
+			var cx := 184.0 + sin((wy - 28.0) / 14.5 * 0.45) * 6.5
+			canvas.draw_line(Vector2(cx - 10, wy), Vector2(cx - 3, wy), Color(0.76, 0.96, 1.0, 0.55), 1.3)
+			canvas.draw_line(Vector2(cx + 2, wy + 5), Vector2(cx + 9, wy + 5), Color(0.76, 0.96, 1.0, 0.45), 1.2)
+		for lp in [Vector2(174, 122), Vector2(194, 148), Vector2(178, 212)]:
+			canvas.draw_circle(lp, 4.2, Color(0.18, 0.56, 0.24))
+			canvas.draw_circle(lp + Vector2(1, -1), 1.4, Color(1.0, 0.68, 0.78)) # tiny lotus flower
 		# Decorative Trees, Bushes & Wildflowers
 		if tree_tex != null:
 			for tp in [Vector2(26, 46), Vector2(138, 44), Vector2(280, 42), Vector2(386, 46), Vector2(44, 224), Vector2(284, 224), Vector2(444, 218)]:
@@ -66,6 +80,9 @@ static func draw_biome_backdrop(canvas: CanvasItem, biome: String, t: float, mea
 		if bush_tex != null:
 			for bp in [Vector2(66, 126), Vector2(140, 146), Vector2(246, 142), Vector2(364, 218)]:
 				canvas.draw_texture_rect(bush_tex, Rect2(bp - Vector2(8, 8), Vector2(16, 14)), false)
+		for fp in [Vector2(52, 140), Vector2(118, 128), Vector2(262, 126), Vector2(342, 202), Vector2(78, 206)]:
+			canvas.draw_circle(fp, 1.6, Color(1.0, 0.92, 0.36))
+			canvas.draw_circle(fp + Vector2(5, 3), 1.4, Color(0.95, 0.52, 0.68))
 
 	elif biome == "rift":
 		# 2. Twilight Highlands + Glowing Volcanic/Arcane Rift Fissures!
@@ -111,79 +128,55 @@ static func draw_biome_backdrop(canvas: CanvasItem, biome: String, t: float, mea
 static func draw_biome_bridges(canvas: CanvasItem, biome: String) -> void:
 	if biome != "bridge":
 		return
-	# Wooden plank bridges over the Emerald River at North (y=80) & South (y=184) crossings!
+	# Detailed Stone-Pier Timber Bridges with Water Drop Shadow & Warm Corner Lanterns!
 	for by in [74.0, 174.0]:
-		canvas.draw_rect(Rect2(160, by, 50, 22), Color(0.44, 0.28, 0.14))
-		canvas.draw_rect(Rect2(160, by, 50, 22), Color(0.22, 0.12, 0.05), false, 1.4)
-		for px in range(166, 208, 7):
-			canvas.draw_line(Vector2(px, by + 1), Vector2(px, by + 21), Color(0.28, 0.16, 0.08), 1.0)
-		# Top & bottom wooden railings
-		canvas.draw_line(Vector2(160, by + 1), Vector2(210, by + 1), Color(0.68, 0.48, 0.24), 2.2)
-		canvas.draw_line(Vector2(160, by + 21), Vector2(210, by + 21), Color(0.68, 0.48, 0.24), 2.2)
+		# Shadow on water below bridge
+		canvas.draw_rect(Rect2(160, by + 18, 52, 7), Color(0.04, 0.10, 0.18, 0.45))
+		# Stone abutments on left/right shores
+		canvas.draw_rect(Rect2(156, by - 1, 7, 24), Color(0.50, 0.52, 0.58))
+		canvas.draw_rect(Rect2(209, by - 1, 7, 24), Color(0.50, 0.52, 0.58))
+		canvas.draw_rect(Rect2(156, by - 1, 7, 24), Color(0.18, 0.18, 0.22), false, 1.0)
+		canvas.draw_rect(Rect2(209, by - 1, 7, 24), Color(0.18, 0.18, 0.22), false, 1.0)
+		# Shaded timber deck planks
+		canvas.draw_rect(Rect2(162, by, 48, 22), Color(0.48, 0.31, 0.15))
+		canvas.draw_rect(Rect2(162, by + 2, 48, 5), Color(0.58, 0.40, 0.20))
+		canvas.draw_rect(Rect2(162, by, 48, 22), Color(0.20, 0.11, 0.05), false, 1.2)
+		for px in range(167, 208, 6):
+			canvas.draw_line(Vector2(px, by + 1), Vector2(px, by + 21), Color(0.26, 0.15, 0.07), 1.0)
+		# Top & bottom wooden railings + warm glowing bridge posts
+		canvas.draw_line(Vector2(160, by + 1), Vector2(212, by + 1), Color(0.72, 0.52, 0.28), 2.2)
+		canvas.draw_line(Vector2(160, by + 21), Vector2(212, by + 21), Color(0.72, 0.52, 0.28), 2.2)
+		for lx in [161.0, 211.0]:
+			for ly in [by + 1.0, by + 21.0]:
+				canvas.draw_circle(Vector2(lx, ly), 4.5, Color(1.0, 0.78, 0.30, 0.28))
+				canvas.draw_circle(Vector2(lx, ly), 1.8, Color(1.0, 0.94, 0.50))
 
 
 static func draw_tower_detailed(canvas: CanvasItem, tid: String, p: Vector2, level: int, owner: int, t: float, font: Font) -> void:
-	var ocol := Color(0.32, 0.78, 1.0) if owner == 1 else Color(1.0, 0.38, 0.44)
-	var ocol_dark := ocol.darkened(0.42)
-	var lvl_scale := 1.0 + float(maxi(0, level - 1)) * 0.08
+	var ocol := Color(0.32, 0.80, 1.0) if owner == 1 else Color(1.0, 0.40, 0.46)
+	var bob := sin(t * 4.5 + p.x * 0.1) * 1.4 if tid == "mage" else 0.0
 
-	# Soft ground shadow + Owner Heraldic Pedestal Ring
-	canvas.draw_circle(p + Vector2(0, 9), 13.0 * lvl_scale, Color(0.0, 0.0, 0.0, 0.35))
-	canvas.draw_circle(p + Vector2(0, 8), 11.5 * lvl_scale, Color(ocol.r, ocol.g, ocol.b, 0.28))
-	canvas.draw_arc(p + Vector2(0, 8), 11.5 * lvl_scale, 0.0, TAU, 18, ocol, 1.6)
+	# Ground Shadow + Subtle Owner Ring
+	canvas.draw_circle(p + Vector2(0, 9), 13.0, Color(0.0, 0.0, 0.0, 0.36))
+	canvas.draw_arc(p + Vector2(0, 8), 12.0, 0.0, TAU, 18, Color(ocol.r, ocol.g, ocol.b, 0.65), 1.4)
 
-	match tid:
-		"arrow":
-			# Multi-tier Wooden/Stone Watchtower with Battlements & Roof Pennant
-			var base_col := Color(0.56, 0.38, 0.20) if level == 1 else (Color(0.54, 0.56, 0.62) if level == 2 else Color(0.72, 0.64, 0.46))
-			canvas.draw_rect(Rect2(p + Vector2(-9, -6), Vector2(18, 16)), base_col)
-			canvas.draw_rect(Rect2(p + Vector2(-11, -11), Vector2(22, 6)), base_col.lightened(0.14))
-			for bx in [-11, -5, 1, 7]:
-				canvas.draw_rect(Rect2(p + Vector2(bx, -14), Vector2(4, 3)), base_col.lightened(0.22))
-			canvas.draw_rect(Rect2(p + Vector2(-9, -6), Vector2(18, 16)), Color(0.16, 0.10, 0.06), false, 1.2)
-			# Owner-colored pointed archer roof + fluttering pennant on Lv2+
-			canvas.draw_polygon(PackedVector2Array([p + Vector2(-8, -14), p + Vector2(8, -14), p + Vector2(0, -22 - level)]), PackedColorArray([ocol_dark]))
-			canvas.draw_polygon(PackedVector2Array([p + Vector2(0, -14), p + Vector2(8, -14), p + Vector2(0, -22 - level)]), PackedColorArray([ocol]))
-			if level >= 2:
-				var wave := sin(t * 8.0) * 2.0
-				canvas.draw_line(p + Vector2(0, -22 - level), p + Vector2(0, -28 - level), Color(1.0, 0.92, 0.55), 1.2)
-				canvas.draw_polygon(PackedVector2Array([p + Vector2(0, -28 - level), p + Vector2(8, -26 - level + wave), p + Vector2(0, -24 - level)]), PackedColorArray([Color(1.0, 0.88, 0.25)]))
+	# Hand-Crafted 32x36 Pixel-Art Tower Sprite!
+	var tex := PixelTowerSprites.get_tower_texture(tid, owner)
+	if tex != null:
+		canvas.draw_texture_rect(tex, Rect2(p - Vector2(16, 25 - bob), Vector2(32, 36)), false)
 
-		"mage":
-			# Arcane Spire with Orbiting/Bobbing Crystal Orb (Lv3 adds twin orbiting runes!)
-			var bob := sin(t * 5.0 + p.x * 0.1) * 2.2
-			canvas.draw_rect(Rect2(p + Vector2(-8, -8), Vector2(16, 18)), Color(0.22, 0.18, 0.36))
-			canvas.draw_rect(Rect2(p + Vector2(-10, 4), Vector2(20, 6)), Color(0.32, 0.26, 0.48))
-			canvas.draw_rect(Rect2(p + Vector2(-8, -8), Vector2(16, 18)), ocol, false, 1.3)
-			# Glowing Violet Crystal Core
-			var orb_p := p + Vector2(0, -15 + bob)
-			canvas.draw_circle(orb_p, 7.0 + level, Color(0.76, 0.32, 1.0, 0.32))
-			canvas.draw_circle(orb_p, 4.2 + float(level) * 0.6, Color(0.92, 0.56, 1.0))
-			canvas.draw_circle(orb_p + Vector2(-1.2, -1.2), 1.6, Color.WHITE)
-			if level >= 2:
-				var ang := t * 3.5
-				canvas.draw_circle(orb_p + Vector2(cos(ang), sin(ang)) * 8.0, 1.8, ocol)
-				if level >= 3:
-					canvas.draw_circle(orb_p + Vector2(cos(ang + PI), sin(ang + PI)) * 8.0, 1.8, Color(1.0, 0.92, 0.35))
+	# Tier Lv2 / Lv3 Golden Aura & Orbiting Runes
+	if level >= 2:
+		var ang := t * 3.2
+		var orb_r := 13.5
+		canvas.draw_circle(p + Vector2(cos(ang) * orb_r, -10.0 + sin(ang) * 4.5), 2.0, Color(1.0, 0.92, 0.38))
+		if level >= 3:
+			canvas.draw_circle(p + Vector2(cos(ang + PI) * orb_r, -10.0 + sin(ang + PI) * 4.5), 2.2, ocol)
+			canvas.draw_arc(p + Vector2(0, 8), 14.5, 0.0, TAU, 20, Color(1.0, 0.90, 0.35, 0.70), 1.2)
 
-		"frost":
-			# Faceted Glacier Obelisk with Shimmering Cyan Aura
-			var shimmer := 0.75 + 0.25 * sin(t * 6.0)
-			canvas.draw_polygon(PackedVector2Array([p + Vector2(-10, 10), p + Vector2(10, 10), p + Vector2(6, -9), p + Vector2(0, -20 - level * 2), p + Vector2(-6, -9)]), PackedColorArray([Color(0.30, 0.70, 0.94)]))
-			canvas.draw_polygon(PackedVector2Array([p + Vector2(0, 10), p + Vector2(10, 10), p + Vector2(6, -9), p + Vector2(0, -20 - level * 2)]), PackedColorArray([Color(0.64, 0.94, 1.0)]))
-			canvas.draw_circle(p + Vector2(0, -17 - level * 2), 3.2 + level * 0.5, Color(0.85, 1.0, 1.0, shimmer))
-			canvas.draw_rect(Rect2(p + Vector2(-4, 2), Vector2(8, 5)), ocol)
-
-		"barracks":
-			# Fortified Stone Garrison with Archway, Gold Trim & Fluttering Owner Banner
-			var wave := sin(t * 7.5) * 2.0
-			canvas.draw_rect(Rect2(p + Vector2(-11, -7), Vector2(22, 17)), Color(0.56, 0.58, 0.64))
-			canvas.draw_rect(Rect2(p + Vector2(-11, -7), Vector2(22, 17)), Color(0.95, 0.80, 0.32) if level >= 2 else ocol, false, 1.6)
-			canvas.draw_rect(Rect2(p + Vector2(-4, 1), Vector2(8, 9)), Color(0.18, 0.12, 0.08))
-			canvas.draw_line(p + Vector2(0, -7), p + Vector2(0, -21 - level), Color(0.95, 0.88, 0.65), 1.5)
-			canvas.draw_polygon(PackedVector2Array([p + Vector2(0, -21 - level), p + Vector2(11, -18 - level + wave), p + Vector2(0, -14 - level)]), PackedColorArray([ocol]))
-
-	# Crisp Level Stars / Owner Tag
+	# Crisp Dark-Pill Nameplate (never clashes with ground ring!)
 	var stars := "★".repeat(clampi(level, 1, 3))
-	canvas.draw_string(font, p + Vector2(-21, 19), "P%d %s" % [owner, stars], HORIZONTAL_ALIGNMENT_CENTER, 42, 6, Color(0.05, 0.04, 0.08))
-	canvas.draw_string(font, p + Vector2(-22, 18), "P%d %s" % [owner, stars], HORIZONTAL_ALIGNMENT_CENTER, 42, 6, ocol)
+	var tag := "P%d %s" % [owner, stars]
+	canvas.draw_rect(Rect2(p + Vector2(-18, 12), Vector2(36, 9)), Color(0.05, 0.07, 0.14, 0.85))
+	canvas.draw_rect(Rect2(p + Vector2(-18, 12), Vector2(36, 9)), Color(ocol.r, ocol.g, ocol.b, 0.75), false, 0.8)
+	canvas.draw_string(font, p + Vector2(-18, 19), tag, HORIZONTAL_ALIGNMENT_CENTER, 36, 6, ocol)

@@ -145,8 +145,8 @@ func _build_ui() -> void:
 	layer.add_child(sep)
 
 	_hud_top = Label.new()
-	_hud_top.position = Vector2(6, 2)
-	_hud_top.custom_minimum_size = Vector2(468, 24)
+	_hud_top.position = Vector2(10, 2)
+	_hud_top.custom_minimum_size = Vector2(460, 24)
 	_hud_top.add_theme_font_size_override("font_size", 8)
 	layer.add_child(_hud_top)
 
@@ -182,7 +182,7 @@ func _build_ui() -> void:
 	layer.add_child(bot_sep)
 
 	var row := HBoxContainer.new()
-	row.position = Vector2(4, 243)
+	row.position = Vector2(8, 243)
 	row.add_theme_constant_override("separation", 3)
 	layer.add_child(row)
 
@@ -319,7 +319,9 @@ func _update_guide() -> void:
 	match _tutorial_step:
 		0:
 			if not director.pads.is_empty():
-				_guide_beacon.point_to(director.pads[0]["pos"], "▼ P1点此建塔 ▼")
+				var p0: Vector2 = director.pads[0]["pos"]
+				_guide_beacon.badge_y_offset = 16.0 if p0.y < 85.0 else -24.0
+				_guide_beacon.point_to(p0, "▲ P1点此建塔 ▲" if p0.y < 85.0 else "▼ P1点此建塔 ▼")
 			_guide_banner.text = "★ 合作引导 [1/2]：左键点击蓝色高亮塔位建塔！P2(AI或方向键+Enter)将守卫南路并与你触发连携！"
 		1:
 			_guide_beacon.clear_target()
@@ -482,14 +484,17 @@ func _draw() -> void:
 	# 1. Biome-Specific Pixel-Art Battlefield Backdrop!
 	TowerArtRenderer.draw_biome_backdrop(self, biome, _flow_t, _retro_tex("tile_meadow.png"), _retro_tex("tile_stone.png"), tree_tex, bush_tex)
 
-	# 2. Multi-Lane Roads + Animated Flowing Directional Chevrons
-	var road_outer := Color(0.26, 0.18, 0.12) if biome == "bridge" else (Color(0.22, 0.16, 0.28) if biome == "rift" else Color(0.28, 0.26, 0.30))
-	var road_inner := Color(0.56, 0.44, 0.28) if biome == "bridge" else (Color(0.42, 0.34, 0.48) if biome == "rift" else Color(0.48, 0.46, 0.50))
+	# 2. Multi-Lane Roads (Grassy Trim + Stone Rim + Shaded Dirt/Cobble Center + Animated Chevrons)
+	var road_outer := Color(0.24, 0.17, 0.10) if biome == "bridge" else (Color(0.20, 0.14, 0.26) if biome == "rift" else Color(0.24, 0.23, 0.28))
+	var road_inner := Color(0.54, 0.42, 0.26) if biome == "bridge" else (Color(0.40, 0.32, 0.46) if biome == "rift" else Color(0.46, 0.44, 0.50))
+	var road_center := Color(0.64, 0.52, 0.34, 0.55) if biome == "bridge" else (Color(0.50, 0.42, 0.58, 0.45) if biome == "rift" else Color(0.56, 0.54, 0.60, 0.45))
 	for lane in director.engine.lanes.values():
 		var l := lane as TDPathLane
 		if l.waypoints.size() >= 2:
-			draw_polyline(l.waypoints, road_outer, 23.0)
+			draw_polyline(l.waypoints, Color(0.10, 0.14, 0.08, 0.50), 26.0)
+			draw_polyline(l.waypoints, road_outer, 22.0)
 			draw_polyline(l.waypoints, road_inner, 17.0)
+			draw_polyline(l.waypoints, road_center, 9.0)
 			var total_len: float = l.total_length
 			if total_len > 24.0:
 				var spacing := 44.0
@@ -510,18 +515,16 @@ func _draw() -> void:
 	if gate_tex != null:
 		draw_texture_rect(gate_tex, Rect2(Vector2(412, 96), Vector2(64, 74)), false)
 
-	# 4. Build Pads + Selected Range Circle Preview!
+	# 4. Carved Stone Build Pad Pedestals + Selected Range Circle Preview!
 	for i in range(director.pads.size()):
 		var pad: Dictionary = director.pads[i]
 		var pp: Vector2 = pad["pos"]
 		var pid := str(pad["id"])
 		var hint := int(pad.get("owner_hint", 0))
-		var base_col := Color(0.32, 0.72, 1.0) if hint == 1 else (Color(1.0, 0.42, 0.45) if hint == 2 else Color(1.0, 0.88, 0.30))
 		if not director.pad_to_tower_uid.has(pid):
-			draw_circle(pp, 11.5, Color(0.14, 0.16, 0.20, 0.82))
-			draw_circle(pp, 8.8, Color(base_col.r, base_col.g, base_col.b, 0.22))
-			draw_line(pp + Vector2(-4, 0), pp + Vector2(4, 0), base_col, 1.4)
-			draw_line(pp + Vector2(0, -4), pp + Vector2(0, 4), base_col, 1.4)
+			var ptex := PixelTowerSprites.get_pad_texture(hint)
+			if ptex != null:
+				draw_texture_rect(ptex, Rect2(pp - Vector2(14, 10), Vector2(28, 22)), false)
 		if i == _p1_pad_idx:
 			var pr := 15.0 + 1.2 * sin(_flow_t * 6.0)
 			draw_arc(pp, pr, 0.0, TAU, 20, Color(0.42, 0.90, 1.0), 2.4)
