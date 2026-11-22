@@ -1,12 +1,21 @@
 extends Node2D
-## 《双子堡垒：共守苍穹》 — Full Commercial 2-Player Co-op Tower Defense Battlefield
-## Supports Solo+AI Partner, Local 2P Couch Co-op, and ENet LAN Co-op via `CoopTDDirector`.
+## 《双子堡垒：共守苍穹》 — Commercial-Grade 2-Player Co-op Pixel Tower Defense Battlefield
+## Features:
+## - 3 Distinct Animated Biomes (Emerald River & Bridges / Arcane Rift Highlands / Royal Siege Courtyard)
+## - Multi-Tier Pixel-Art Tower Architecture (Lv1..Lv3) + Owner Heraldry + Glowing Cross-Player Combo Lines
+## - Full Combat Juice via BattleVFX (Ballistic Arrows, Arcane Orbs, Frost Shards, Chain Lightning,
+##   Floating Damage/Gold Numbers, Hit-Flash, Build Dust, Shockwaves, Trauma Screen Shake)
+## - Dramatic Cinematics (Stage Intro Curtain, Wave Slide-In Banner, Boss Warning Cut-In,
+##   and Full-Screen Twin-Star Comet Barrage Synchro Ultimate!)
+## - Contextual Tower Inspector Card (Range Ring Preview, Lv, DPS, Upgrade/Sell `[X]`)
 
 const RETRO_DIR := "res://content/packs/jrpg_retro/"
 
 var director := CoopTDDirector.new()
 var ai_partner := CoopAIPartner.new()
+var vfx := BattleVFX.new()
 var ai_enabled: bool = true
+var biome: String = "bridge"
 
 var _tower_types: Array[String] = ["arrow", "mage", "frost", "barracks"]
 var _p1_tower: String = "arrow"
@@ -18,11 +27,10 @@ var _speed_mult: float = 1.0
 var _is_paused: bool = false
 var _is_finished: bool = false
 var _flow_t: float = 0.0
-var _ult_flash: float = 0.0
 var _banner_ttl: float = 0.0
 var _tutorial_step: int = 0 # 0=P1 build tower, 1=call wave 1, 2=done
 
-var _shots: Array[Dictionary] = []
+var _hit_flash: Dictionary = {} # creep_uid -> float
 var _tex_cache: Dictionary = {}
 
 var _hud_top: Label
@@ -39,17 +47,55 @@ var _result_panel: StageResultPanel
 func _ready() -> void:
 	ai_enabled = GameSession.is_ai_partner_enabled()
 	var stage := CampaignData.get_stage_by_id(GameSession.selected_stage_id)
+	biome = TowerArtRenderer.get_biome_for_stage(str(stage["id"]))
+	vfx.init_ambient_motes(biome, 24)
 	director.setup_stage(stage, GameSession.meta)
+
+	# Wire rich VFX & Cinematic callbacks!
 	director.banner_event.connect(_show_banner)
+	director.gold_transferred.connect(func(_fp: int, _tp: int, amt: int, bonus: int):
+		vfx.spawn_float_text(Vector2(240, 120), "💰 +%dG!" % (amt + bonus), Color(1.0, 0.94, 0.32), 9)
+		vfx.spawn_burst(Vector2(240, 120), Color(1.0, 0.90, 0.30), 12, 70.0, 45.0)
+	)
 	director.synchro_unleashed.connect(func(_h: int):
-		_ult_flash = 0.65
+		vfx.play_synchro_ultimate_cinematic()
 		MoonRPG.play_sfx("sfx.quest_clear")
 	)
-	director.engine.tower_fired.connect(func(t: Dictionary, tgt: Dictionary, _dmg: float):
-		var col := Color(0.55, 0.92, 1.0) if str(t["tower_id"]) == "frost" else (Color(0.86, 0.50, 1.0) if str(t["tower_id"]) == "mage" else Color(1.0, 0.94, 0.45))
-		_shots.append({"from": t["pos"], "to": tgt["pos"], "color": col, "ttl": 0.14})
+	director.wave_dir.wave_started.connect(func(_wi: int, wname: String):
+		vfx.play_wave_banner(wname)
+	)
+	director.wave_dir.enemy_spawn_requested.connect(func(eid: String, _lid: String, _wi: int):
+		if eid == "boss_warlord":
+			vfx.play_boss_cutin("哥布林铁甲督军", "高护甲重装统帅 · 善用法师塔与冰火超载击破！", _retro_tex("enemy_goblin.png"))
+			MoonRPG.play_sfx("sfx.hurt")
+		elif eid == "boss_obsidian":
+			vfx.play_boss_cutin("黑曜深渊大魔王", "终极王城围攻者 · 双人合体大招决胜负！", _retro_tex("boss_obsidian_clean.png"))
+			MoonRPG.play_sfx("sfx.hurt")
+	)
+	director.engine.tower_fired.connect(func(t: Dictionary, tgt: Dictionary, dmg: float):
+		var tid := str(t["tower_id"])
+		vfx.spawn_projectile(t["pos"] as Vector2, tgt["pos"] as Vector2, tid)
+		var cuid := str(tgt.get("uid", ""))
+		_hit_flash[cuid] = 0.12
+		var dcol := Color(0.76, 0.96, 1.0) if tid == "frost" else (Color(0.95, 0.65, 1.0) if tid == "mage" else Color(1.0, 0.96, 0.72))
+		vfx.spawn_float_text(tgt["pos"] as Vector2, "-%d" % int(round(dmg)), dcol, 7)
+	)
+	director.engine.chain_lightning_fired.connect(func(pts: Array):
+		for i in range(pts.size() - 1):
+			vfx.spawn_lightning(pts[i], pts[i + 1], Color(0.80, 0.62, 1.0))
+	)
+	director.engine.creep_killed.connect(func(creep: Dictionary, bounty: int):
+		var cp: Vector2 = creep["pos"]
+		var is_boss := str(creep.get("enemy_id", "")).begins_with("boss")
+		vfx.spawn_burst(cp, Color(1.0, 0.55, 0.35) if is_boss else Color(0.95, 0.85, 0.40), 22 if is_boss else 10, 95.0 if is_boss else 55.0, 45.0)
+		if is_boss:
+			vfx.spawn_shockwave(cp, 44.0, Color(1.0, 0.86, 0.35), 0.45)
+			vfx.add_shake(0.65)
+		vfx.spawn_float_text(cp + Vector2(0, -8), "+%dG" % bounty, Color(1.0, 0.92, 0.32), 8 if is_boss else 7)
 	)
 	director.engine.lives_changed.connect(func(rem: int):
+		vfx.add_shake(0.45)
+		vfx.spawn_float_text(Vector2(422, 118), "城防受击!", Color(1.0, 0.28, 0.28), 8)
 		if rem <= 0:
 			_finish_stage(false)
 	)
@@ -65,6 +111,7 @@ func _ready() -> void:
 	_guide_beacon.badge_y_offset = -24.0
 	add_child(_guide_beacon)
 	_update_guide()
+	vfx.play_stage_intro(str(stage["name"]), str(stage["subtitle"]))
 	MoonRPG.play_bgm("bgm.forest")
 	_refresh_hud()
 
@@ -89,12 +136,12 @@ func _build_ui() -> void:
 
 	var top_bg := ColorRect.new()
 	top_bg.size = Vector2(480, 28)
-	top_bg.color = Color(0.05, 0.09, 0.22, 0.95)
+	top_bg.color = Color(0.05, 0.08, 0.18, 0.95)
 	layer.add_child(top_bg)
 	var sep := ColorRect.new()
 	sep.position = Vector2(0, 27)
 	sep.size = Vector2(480, 1.5)
-	sep.color = Color(0.86, 0.92, 1.0, 0.85)
+	sep.color = Color(0.90, 0.78, 0.42, 0.92)
 	layer.add_child(sep)
 
 	_hud_top = Label.new()
@@ -122,16 +169,16 @@ func _build_ui() -> void:
 	_guide_banner.add_theme_color_override("font_outline_color", Color(0.06, 0.04, 0.02))
 	layer.add_child(_guide_banner)
 
-	# Bottom Command Dock
+	# Bottom Command Dock (Styled Fantasy Bevel Bar)
 	var bot_bg := ColorRect.new()
 	bot_bg.position = Vector2(0, 238)
 	bot_bg.size = Vector2(480, 32)
-	bot_bg.color = Color(0.05, 0.09, 0.22, 0.95)
+	bot_bg.color = Color(0.05, 0.08, 0.18, 0.96)
 	layer.add_child(bot_bg)
 	var bot_sep := ColorRect.new()
 	bot_sep.position = Vector2(0, 238)
 	bot_sep.size = Vector2(480, 1.5)
-	bot_sep.color = Color(0.75, 0.85, 1.0, 0.75)
+	bot_sep.color = Color(0.90, 0.78, 0.42, 0.88)
 	layer.add_child(bot_sep)
 
 	var row := HBoxContainer.new()
@@ -139,11 +186,12 @@ func _build_ui() -> void:
 	row.add_theme_constant_override("separation", 3)
 	layer.add_child(row)
 
-	for pair in [["arrow", "1箭"], ["mage", "2法"], ["frost", "3冰"], ["barracks", "4兵"]]:
+	for pair in [["arrow", "1箭", Color(0.45, 0.62, 0.28)], ["mage", "2法", Color(0.55, 0.30, 0.82)], ["frost", "3冰", Color(0.24, 0.62, 0.86)], ["barracks", "4兵", Color(0.76, 0.56, 0.24)]]:
 		var b := Button.new()
 		b.text = "%s%d" % [pair[1], director.get_tower_cost(pair[0])]
 		b.focus_mode = Control.FOCUS_NONE
 		b.add_theme_font_size_override("font_size", 7)
+		TowerArtRenderer.style_button(b, pair[2])
 		var tid: String = pair[0]
 		b.pressed.connect(func(): _p1_tower = tid; _refresh_hud())
 		row.add_child(b)
@@ -153,6 +201,7 @@ func _build_ui() -> void:
 	b_gold.text = "💰转50G"
 	b_gold.focus_mode = Control.FOCUS_NONE
 	b_gold.add_theme_font_size_override("font_size", 7)
+	TowerArtRenderer.style_button(b_gold, Color(0.76, 0.62, 0.18))
 	b_gold.pressed.connect(func(): _dispatch_cmd({"player_id": GameSession.local_player_id, "action": "transfer_gold", "amount": 50}))
 	row.add_child(b_gold)
 
@@ -160,6 +209,7 @@ func _build_ui() -> void:
 	_ult_btn.text = "☄双星0%"
 	_ult_btn.focus_mode = Control.FOCUS_NONE
 	_ult_btn.add_theme_font_size_override("font_size", 7)
+	TowerArtRenderer.style_button(_ult_btn, Color(0.72, 0.24, 0.68))
 	_ult_btn.pressed.connect(func(): _dispatch_cmd({"player_id": GameSession.local_player_id, "action": "synchro_ult"}))
 	row.add_child(_ult_btn)
 
@@ -167,6 +217,7 @@ func _build_ui() -> void:
 	_ai_btn.text = "AI:开" if ai_enabled else "AI:关"
 	_ai_btn.focus_mode = Control.FOCUS_NONE
 	_ai_btn.add_theme_font_size_override("font_size", 7)
+	TowerArtRenderer.style_button(_ai_btn, Color(0.26, 0.44, 0.64))
 	_ai_btn.pressed.connect(func():
 		ai_enabled = not ai_enabled
 		_ai_btn.text = "AI:开" if ai_enabled else "AI:关"
@@ -177,6 +228,7 @@ func _build_ui() -> void:
 	_speed_btn.text = "1x"
 	_speed_btn.focus_mode = Control.FOCUS_NONE
 	_speed_btn.add_theme_font_size_override("font_size", 7)
+	TowerArtRenderer.style_button(_speed_btn, Color(0.32, 0.42, 0.56))
 	_speed_btn.pressed.connect(_cycle_speed)
 	row.add_child(_speed_btn)
 
@@ -184,6 +236,7 @@ func _build_ui() -> void:
 	_wave_btn.text = "▶召波"
 	_wave_btn.focus_mode = Control.FOCUS_NONE
 	_wave_btn.add_theme_font_size_override("font_size", 7)
+	TowerArtRenderer.style_button(_wave_btn, Color(0.78, 0.30, 0.22))
 	_wave_btn.pressed.connect(func(): _dispatch_cmd({"player_id": GameSession.local_player_id, "action": "call_wave"}))
 	row.add_child(_wave_btn)
 
@@ -191,6 +244,7 @@ func _build_ui() -> void:
 	b_map.text = "地图"
 	b_map.focus_mode = Control.FOCUS_NONE
 	b_map.add_theme_font_size_override("font_size", 7)
+	TowerArtRenderer.style_button(b_map, Color(0.28, 0.34, 0.48))
 	b_map.pressed.connect(func(): get_tree().change_scene_to_file("res://game/scenes/campaign_map.tscn"))
 	row.add_child(b_map)
 
@@ -230,9 +284,16 @@ func _apply_cmd(cmd: Dictionary) -> void:
 	var act := str(cmd.get("action", ""))
 	if bool(res.get("ok", false)):
 		MoonRPG.play_sfx("sfx.ui_confirm")
-		if act == "build_or_upgrade" and _tutorial_step == 0:
-			_tutorial_step = 1
-			_update_guide()
+		if act == "build_or_upgrade":
+			var pad_id := str(cmd.get("pad_id", ""))
+			for p in director.pads:
+				if str(p["id"]) == pad_id:
+					vfx.spawn_burst(p["pos"] as Vector2, Color(1.0, 0.92, 0.55), 12, 62.0, 35.0)
+					vfx.spawn_shockwave(p["pos"] as Vector2, 22.0, Color(0.42, 0.90, 1.0) if int(cmd.get("player_id", 1)) == 1 else Color(1.0, 0.45, 0.48), 0.28)
+					break
+			if _tutorial_step == 0:
+				_tutorial_step = 1
+				_update_guide()
 		elif act == "call_wave" and _tutorial_step < 2:
 			_tutorial_step = 2
 			_update_guide()
@@ -262,7 +323,7 @@ func _update_guide() -> void:
 			_guide_banner.text = "★ 合作引导 [1/2]：左键点击蓝色高亮塔位建塔！P2(AI或方向键+Enter)将守卫南路并与你触发连携！"
 		1:
 			_guide_beacon.clear_target()
-			_guide_banner.text = "★ 合作引导 [2/2]：防线就绪！按 [Space] 或点击【▶召波】开始战斗！相邻建不同塔可激活发光连携！"
+			_guide_banner.text = "★ 合作引导 [2/2]：防线就绪！按 [Space] 或点击【▶召波】开始战斗！按 [X] 可出售选中塔！"
 		_:
 			_guide_beacon.clear_target()
 			_guide_banner.text = "🤝 提示：P1×P2相邻建【寒冰+法师】触发冰火超载，满100%按【☄双星】释放全屏合体大招！"
@@ -288,6 +349,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
 			_dispatch_cmd({"player_id": local_p, "action": "rally_hero", "x": mpos.x, "y": mpos.y})
+			vfx.spawn_shockwave(mpos, 16.0, Color(0.40, 0.88, 1.0), 0.25)
 			get_viewport().set_input_as_handled()
 			return
 		elif mb.button_index == MOUSE_BUTTON_MIDDLE:
@@ -312,13 +374,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_2: _p1_tower = "mage"; _refresh_hud()
 			KEY_3: _p1_tower = "frost"; _refresh_hud()
 			KEY_4: _p1_tower = "barracks"; _refresh_hud()
+			KEY_X:
+				if not director.pads.is_empty():
+					_dispatch_cmd({"player_id": local_p, "action": "sell", "pad_id": str(director.pads[_p1_pad_idx]["id"])})
 			KEY_SPACE: _dispatch_cmd({"player_id": local_p, "action": "call_wave"})
 			KEY_T: _dispatch_cmd({"player_id": local_p, "action": "transfer_gold", "amount": 50})
 			KEY_U: _dispatch_cmd({"player_id": local_p, "action": "synchro_ult"})
 			KEY_P:
 				var mp := InputManager.get_canvas_mouse_pos(self)
 				_dispatch_cmd({"player_id": local_p, "action": "ping", "x": mp.x, "y": mp.y, "label": "⚠ P%d标记!" % local_p})
-			# Local 2P Dedicated P2 Controls (Arrow Keys + Enter + M + G + O)
 			KEY_LEFT, KEY_UP:
 				if not ai_enabled and not director.pads.is_empty():
 					_p2_pad_idx = (_p2_pad_idx - 1 + director.pads.size()) % director.pads.size()
@@ -347,7 +411,15 @@ func _process(delta: float) -> void:
 	if _is_finished:
 		return
 	_flow_t += delta
-	_ult_flash = maxf(0.0, _ult_flash - delta)
+	vfx.tick(delta)
+	position = vfx.shake_offset
+	if _guide_beacon != null:
+		var in_cine := (vfx.intro_timer > 0.0 or vfx.boss_cutin_timer > 0.0 or vfx.ult_cinematic_timer > 0.0)
+		_guide_beacon.visible = (_tutorial_step == 0 and not in_cine)
+
+	for cuid in _hit_flash.keys():
+		_hit_flash[cuid] = maxf(0.0, float(_hit_flash[cuid]) - delta)
+
 	if _banner_ttl > 0.0:
 		_banner_ttl -= delta
 		if _banner_ttl <= 0.0:
@@ -361,11 +433,6 @@ func _process(delta: float) -> void:
 		if director.all_waves_done and director.engine.creeps.is_empty() and director.engine.lives > 0:
 			_finish_stage(true)
 
-	for i in range(_shots.size() - 1, -1, -1):
-		_shots[i]["ttl"] = float(_shots[i]["ttl"]) - delta
-		if float(_shots[i]["ttl"]) <= 0.0:
-			_shots.remove_at(i)
-
 	_refresh_hud()
 	queue_redraw()
 
@@ -374,6 +441,7 @@ func _finish_stage(won: bool) -> void:
 	if _is_finished:
 		return
 	_is_finished = true
+	position = Vector2.ZERO
 	MoonRPG.play_sfx("sfx.quest_clear" if won else "sfx.hurt")
 	var stars := 0
 	if won:
@@ -388,7 +456,7 @@ func _finish_stage(won: bool) -> void:
 func _refresh_hud() -> void:
 	if _hud_top == null:
 		return
-	_hud_top.text = "【%s】 P1(蓝):%dG | 城防:%d/20 波:%d/%d 连携:%d条 | P2(红):%dG (%s)\nP1:左键建/升 右键英雄 T转账 U大招 | P2:%s" % [
+	_hud_top.text = "【%s】 P1(蓝):%dG | 城防:%d/20 波:%d/%d 连携:%d条 | P2(红):%dG (%s)\nP1:左键建/升 右键英雄 X卖塔 T转账 U大招 | P2:%s" % [
 		str(director.stage_def.get("name", "双子堡垒")),
 		int(director.gold[1]), director.engine.lives,
 		maxi(0, director.wave_dir.current_wave_index + 1), director.wave_dir.get_total_waves(),
@@ -397,32 +465,31 @@ func _refresh_hud() -> void:
 		("AI自动协作中" if ai_enabled else "方向键选位 Enter建塔 M换塔 G转账 O大招")
 	]
 	for tid in _tower_btns.keys():
-		(_tower_btns[tid] as Button).modulate = Color(1.0, 0.94, 0.30) if tid == _p1_tower else Color(0.84, 0.88, 0.96)
+		(_tower_btns[tid] as Button).modulate = Color(1.0, 0.96, 0.45) if tid == _p1_tower else Color(0.84, 0.88, 0.96)
 	if _ult_btn != null:
 		var pct := int(director.synchro_charge)
 		_ult_btn.text = "☄双星就绪!" if pct >= 100 else "☄双星%d%%" % pct
-		_ult_btn.modulate = Color(1.0, 0.45, 0.96) if pct >= 100 else Color(0.75, 0.78, 0.86)
+		_ult_btn.modulate = Color(1.0, 0.62, 1.0) if pct >= 100 else Color(0.75, 0.78, 0.86)
 	if _wave_btn != null:
-		_wave_btn.modulate = Color(1.0, 0.92, 0.28) if _tutorial_step == 1 else Color.WHITE
+		_wave_btn.modulate = Color(1.0, 0.92, 0.32) if _tutorial_step == 1 else Color.WHITE
 
 
 func _draw() -> void:
 	var font := ThemeManager.get_font() if ThemeManager else ThemeDB.fallback_font
+	var tree_tex: Texture2D = AssetRegistry.get_prop_texture("tree") if AssetRegistry else null
+	var bush_tex: Texture2D = AssetRegistry.get_prop_texture("bush") if AssetRegistry else null
 
-	# 1. Tiled Pixel Meadow
-	draw_rect(Rect2(0, 28, 480, 210), Color(0.15, 0.28, 0.16))
-	var mtex := _retro_tex("tile_meadow.png")
-	if mtex != null:
-		for tx in range(0, 480, 32):
-			for ty in range(28, 240, 32):
-				draw_texture_rect(mtex, Rect2(Vector2(tx, ty), Vector2(32, 32)), false)
+	# 1. Biome-Specific Pixel-Art Battlefield Backdrop!
+	TowerArtRenderer.draw_biome_backdrop(self, biome, _flow_t, _retro_tex("tile_meadow.png"), _retro_tex("tile_stone.png"), tree_tex, bush_tex)
 
-	# 2. Multi-Lane Dirt Roads + Flowing Directional Chevrons
+	# 2. Multi-Lane Roads + Animated Flowing Directional Chevrons
+	var road_outer := Color(0.26, 0.18, 0.12) if biome == "bridge" else (Color(0.22, 0.16, 0.28) if biome == "rift" else Color(0.28, 0.26, 0.30))
+	var road_inner := Color(0.56, 0.44, 0.28) if biome == "bridge" else (Color(0.42, 0.34, 0.48) if biome == "rift" else Color(0.48, 0.46, 0.50))
 	for lane in director.engine.lanes.values():
 		var l := lane as TDPathLane
 		if l.waypoints.size() >= 2:
-			draw_polyline(l.waypoints, Color(0.28, 0.20, 0.12), 23.0)
-			draw_polyline(l.waypoints, Color(0.56, 0.44, 0.28), 17.0)
+			draw_polyline(l.waypoints, road_outer, 23.0)
+			draw_polyline(l.waypoints, road_inner, 17.0)
 			var total_len: float = l.total_length
 			if total_len > 24.0:
 				var spacing := 44.0
@@ -432,27 +499,42 @@ func _draw() -> void:
 					var p2 := l.get_point_at_progress(minf(total_len, d + 4.0) / total_len)
 					var dir := (p2 - p1).normalized()
 					var perp := Vector2(-dir.y, dir.x)
-					draw_polyline(PackedVector2Array([p1 - dir * 2.5 + perp * 3.8, p1 + dir * 4.2, p1 - dir * 2.5 - perp * 3.8]), Color(1.0, 0.92, 0.55, 0.58), 1.5)
+					draw_polyline(PackedVector2Array([p1 - dir * 2.5 + perp * 3.8, p1 + dir * 4.2, p1 - dir * 2.5 - perp * 3.8]), Color(1.0, 0.92, 0.55, 0.55), 1.5)
 					d += spacing
 
-	# 3. Royal Castle Gatehouse
+	# 2b. Wooden Plank Bridges over Emerald River (Stage 1)
+	TowerArtRenderer.draw_biome_bridges(self, biome)
+
+	# 3. Royal Castle Gatehouse + Banner
 	var gate_tex := _retro_tex("house_royal_gatehouse.png")
 	if gate_tex != null:
 		draw_texture_rect(gate_tex, Rect2(Vector2(412, 96), Vector2(64, 74)), false)
 
-	# 4. Build Pads (Blue=P1, Red=P2, Gold=Shared)
+	# 4. Build Pads + Selected Range Circle Preview!
 	for i in range(director.pads.size()):
 		var pad: Dictionary = director.pads[i]
 		var pp: Vector2 = pad["pos"]
+		var pid := str(pad["id"])
 		var hint := int(pad.get("owner_hint", 0))
 		var base_col := Color(0.32, 0.72, 1.0) if hint == 1 else (Color(1.0, 0.42, 0.45) if hint == 2 else Color(1.0, 0.88, 0.30))
-		if not director.pad_to_tower_uid.has(str(pad["id"])):
-			draw_circle(pp, 11.0, Color(0.16, 0.18, 0.22, 0.78))
-			draw_circle(pp, 8.5, Color(base_col.r, base_col.g, base_col.b, 0.25))
+		if not director.pad_to_tower_uid.has(pid):
+			draw_circle(pp, 11.5, Color(0.14, 0.16, 0.20, 0.82))
+			draw_circle(pp, 8.8, Color(base_col.r, base_col.g, base_col.b, 0.22))
 			draw_line(pp + Vector2(-4, 0), pp + Vector2(4, 0), base_col, 1.4)
 			draw_line(pp + Vector2(0, -4), pp + Vector2(0, 4), base_col, 1.4)
 		if i == _p1_pad_idx:
-			draw_arc(pp, 15.0, 0.0, TAU, 20, Color(0.42, 0.88, 1.0), 2.4)
+			var pr := 15.0 + 1.2 * sin(_flow_t * 6.0)
+			draw_arc(pp, pr, 0.0, TAU, 20, Color(0.42, 0.90, 1.0), 2.4)
+			# Range Preview Circle for selected tower or existing tower
+			var r_val := 105.0
+			if director.pad_to_tower_uid.has(pid):
+				var existing: Dictionary = director.engine.towers.get(str(director.pad_to_tower_uid[pid]), {})
+				r_val = float(existing.get("range", 105.0))
+			else:
+				var def: Dictionary = director.engine.tower_defs.get(_p1_tower, {})
+				r_val = float(def.get("range", 105.0))
+			draw_circle(pp, r_val, Color(0.42, 0.90, 1.0, 0.06))
+			draw_arc(pp, r_val, 0.0, TAU, 36, Color(0.42, 0.90, 1.0, 0.32), 1.1)
 		if not ai_enabled and i == _p2_pad_idx:
 			draw_arc(pp, 17.5, 0.0, TAU, 20, Color(1.0, 0.40, 0.45), 2.2)
 
@@ -462,73 +544,96 @@ func _draw() -> void:
 		var b: Vector2 = link["to_pos"]
 		var lcol: Color = link["color"]
 		var pulse := 0.6 + 0.4 * sin(_flow_t * 7.0)
-		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.35 * pulse), 5.0)
-		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.95), 1.8)
+		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.32 * pulse), 5.5)
+		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.96), 1.8)
+		# Animated traveling spark along the combo tether!
+		var spark_p := a.lerp(b, fmod(_flow_t * 0.9, 1.0))
+		draw_circle(spark_p, 2.5, Color.WHITE)
 		var mid := (a + b) * 0.5
-		draw_string(font, mid + Vector2(-30, -4), str(link["label"]), HORIZONTAL_ALIGNMENT_CENTER, 60, 6, lcol)
+		draw_rect(Rect2(mid - Vector2(28, 10), Vector2(56, 11)), Color(0.06, 0.05, 0.12, 0.78))
+		draw_string(font, mid + Vector2(-28, -2), str(link["label"]), HORIZONTAL_ALIGNMENT_CENTER, 56, 6, lcol)
 
-	# 6. Towers with P1 (Blue) / P2 (Red) Ownership Badges
+	# 6. Multi-Tier Pixel-Art Towers!
 	for uid in director.engine.towers.keys():
 		var t: Dictionary = director.engine.towers[uid]
-		var p: Vector2 = t["pos"]
 		var owner := int(director.tower_owners.get(uid, 1))
-		var ocol := Color(0.32, 0.78, 1.0) if owner == 1 else Color(1.0, 0.38, 0.42)
-		var tid := str(t["tower_id"])
-		draw_circle(p + Vector2(0, 8), 11.5, Color(ocol.r, ocol.g, ocol.b, 0.42))
-		var tcol := Color(0.40, 0.82, 0.98) if tid == "frost" else (Color(0.68, 0.38, 0.95) if tid == "mage" else (Color(0.62, 0.64, 0.70) if tid == "barracks" else Color(0.62, 0.42, 0.22)))
-		draw_rect(Rect2(p - Vector2(9, 10), Vector2(18, 18)), tcol)
-		draw_rect(Rect2(p - Vector2(9, 10), Vector2(18, 18)), ocol, false, 1.8)
-		var tname := "箭" if tid == "arrow" else ("法" if tid == "mage" else ("冰" if tid == "frost" else "兵"))
-		draw_string(font, p + Vector2(-20, 18), "P%d%sLv%d" % [owner, tname, int(t["level"])], HORIZONTAL_ALIGNMENT_CENTER, 40, 6, ocol)
+		TowerArtRenderer.draw_tower_detailed(self, str(t["tower_id"]), t["pos"] as Vector2, int(t["level"]), owner, _flow_t, font)
 
-	# 7. Dual Heroes & Barracks Soldiers
+	# 7. Dual Heroes & Barracks Soldiers (with walk bobbing!)
 	var guard_tex := _retro_tex("npc_guard.png")
 	var hero_tex := _retro_tex("hero_ranger.png")
 	for s in director.engine.soldiers:
 		if float(s["hp"]) <= 0.0:
 			continue
 		var sp: Vector2 = s["pos"]
+		var bob := absf(sin(_flow_t * 8.0 + sp.x * 0.2)) * 1.8
+		draw_circle(sp + Vector2(0, 6), 7.5, Color(0, 0, 0, 0.30))
 		if bool(s["is_hero"]):
 			var is_p1 := str(s.get("name", "")).begins_with("P1")
 			var tex := hero_tex if is_p1 else guard_tex
 			if tex != null:
-				draw_texture_rect(tex, Rect2(sp - Vector2(13, 16), Vector2(26, 26)), false)
-			draw_arc(sp + Vector2(0, 6), 10.0, 0.0, TAU, 14, Color(0.35, 0.85, 1.0) if is_p1 else Color(1.0, 0.38, 0.42), 1.8)
+				draw_texture_rect(tex, Rect2(sp - Vector2(13, 16 + bob), Vector2(26, 26)), false)
+			draw_arc(sp + Vector2(0, 6), 10.5, 0.0, TAU, 14, Color(0.35, 0.85, 1.0) if is_p1 else Color(1.0, 0.38, 0.42), 1.8)
 		elif guard_tex != null:
-			draw_texture_rect(guard_tex, Rect2(sp - Vector2(9, 11), Vector2(18, 18)), false)
+			draw_texture_rect(guard_tex, Rect2(sp - Vector2(9, 11 + bob), Vector2(18, 18)), false)
 		var shp := clampf(float(s["hp"]) / maxf(1.0, float(s["max_hp"])), 0.0, 1.0)
-		draw_rect(Rect2(sp.x - 8, sp.y - 13, 16 * shp, 2.2), Color(0.35, 0.98, 0.50))
+		draw_rect(Rect2(sp.x - 8, sp.y - 14, 16, 2.2), Color(0.08, 0.10, 0.12))
+		draw_rect(Rect2(sp.x - 8, sp.y - 14, 16 * shp, 2.2), Color(0.35, 0.98, 0.50))
 
-	# 8. Creeps (Ground / Flapping Bats / Warlord & Obsidian Bosses)
+	# 8. Creeps (Walk Bobbing, White Hit-Flash, Frost Tint, Flapping Bats, Boss Auras!)
 	for c in director.engine.creeps:
 		var cp: Vector2 = c["pos"]
 		var eid := str(c["enemy_id"])
+		var cuid := str(c.get("uid", ""))
 		var is_fly := bool(c["is_flying"])
-		var dp := cp + (Vector2(0, -10) if is_fly else Vector2.ZERO)
+		var is_boss := eid.begins_with("boss")
+		var bob := absf(sin(_flow_t * 10.0 + cp.x * 0.15)) * (1.2 if is_boss else 2.2)
+		var dp := cp + (Vector2(0, -10) if is_fly else Vector2(0, -bob))
+		var flash := float(_hit_flash.get(cuid, 0.0)) > 0.0
+		var tint := Color(2.2, 2.2, 2.2) if flash else (Color(0.55, 0.88, 1.0) if float(c.get("slow_timer", 0.0)) > 0.0 else Color.WHITE)
+
+		draw_circle(cp + Vector2(0, 5), 11.0 if is_boss else 5.5, Color(0, 0, 0, 0.34))
+		if is_boss:
+			draw_arc(cp + Vector2(0, 5), 14.0 + 1.5 * sin(_flow_t * 6.0), 0.0, TAU, 20, Color(1.0, 0.25, 0.28, 0.75), 1.8)
 		if is_fly:
-			draw_circle(cp + Vector2(0, 4), 4.5, Color(0, 0, 0, 0.32))
-			var wy := sin(_flow_t * 14.0 + cp.x * 0.2) * 4.0
-			draw_polygon(PackedVector2Array([dp, dp + Vector2(-9, -2 + wy), dp + Vector2(-4, 4)]), PackedColorArray([Color(0.58, 0.22, 0.80)]))
-			draw_polygon(PackedVector2Array([dp, dp + Vector2(9, -2 + wy), dp + Vector2(4, 4)]), PackedColorArray([Color(0.58, 0.22, 0.80)]))
-			draw_circle(dp, 4.0, Color(0.80, 0.40, 0.98))
+			var wy := sin(_flow_t * 14.0 + cp.x * 0.2) * 4.5
+			draw_polygon(PackedVector2Array([dp, dp + Vector2(-9, -2 + wy), dp + Vector2(-4, 4)]), PackedColorArray([Color(0.58, 0.22, 0.80) * tint]))
+			draw_polygon(PackedVector2Array([dp, dp + Vector2(9, -2 + wy), dp + Vector2(4, 4)]), PackedColorArray([Color(0.58, 0.22, 0.80) * tint]))
+			draw_circle(dp, 4.2, Color(0.80, 0.40, 0.98) * tint)
 		else:
 			var tname := "boss_obsidian_clean.png" if eid == "boss_obsidian" else ("enemy_goblin.png" if (eid == "goblin" or eid == "boss_warlord") else ("enemy_wolf.png" if eid == "wolf" else "enemy_slime.png"))
 			var ctex := _retro_tex(tname)
-			var sz := Vector2(34, 34) if eid.begins_with("boss") else Vector2(21, 21)
+			var sz := Vector2(36, 36) if is_boss else Vector2(22, 22)
 			if ctex != null:
-				draw_texture_rect(ctex, Rect2(dp - sz * 0.5, sz), false)
+				draw_texture_rect(ctex, Rect2(dp - sz * 0.5, sz), false, tint)
 		var hp_pct := clampf(float(c["hp"]) / maxf(1.0, float(c["max_hp"])), 0.0, 1.0)
-		var bw := 26.0 if eid.begins_with("boss") else 15.0
-		draw_rect(Rect2(dp.x - bw * 0.5, dp.y - 14, bw, 2.8), Color(0.1, 0.1, 0.15))
-		draw_rect(Rect2(dp.x - bw * 0.5, dp.y - 14, bw * hp_pct, 2.8), Color(1.0, 0.30, 0.34))
+		var bw := 28.0 if is_boss else 16.0
+		draw_rect(Rect2(dp.x - bw * 0.5, dp.y - 16, bw, 3.0), Color(0.08, 0.08, 0.12))
+		draw_rect(Rect2(dp.x - bw * 0.5, dp.y - 16, bw * hp_pct, 3.0), Color(1.0, 0.28, 0.32))
 
-	# 9. Projectiles, Tactical Pings & Twin Star Ultimate Flash
-	for s in _shots:
-		draw_line(s["from"], s["to"], s["color"], 2.0)
+	# 9. World VFX (Ambient Motes, Projectiles, Chain Lightning, Particles, Floating Damage/Gold!)
+	vfx.draw_world_fx(self, font)
+
+	# 10. Tactical Pings
 	for pg in director.active_pings:
 		var pp: Vector2 = pg["pos"]
 		var pr := 10.0 + fmod(_flow_t * 24.0, 18.0)
 		draw_arc(pp, pr, 0.0, TAU, 16, Color(1.0, 0.92, 0.25), 2.0)
 		draw_string(font, pp + Vector2(-36, -14), str(pg["label"]), HORIZONTAL_ALIGNMENT_CENTER, 72, 7, Color(1.0, 0.94, 0.35))
-	if _ult_flash > 0.0:
-		draw_rect(Rect2(0, 28, 480, 210), Color(1.0, 0.65, 0.98, _ult_flash * 0.55))
+
+	# 11. Contextual Mini Tower Inspector Badge (when hovering an existing tower)
+	if _p1_pad_idx >= 0 and _p1_pad_idx < director.pads.size():
+		var hpid := str(director.pads[_p1_pad_idx]["id"])
+		if director.pad_to_tower_uid.has(hpid):
+			var htuid := str(director.pad_to_tower_uid[hpid])
+			var ht: Dictionary = director.engine.towers.get(htuid, {})
+			if not ht.is_empty():
+				var ir := Rect2(Vector2(354, 198), Vector2(120, 36))
+				draw_rect(ir, Color(0.05, 0.08, 0.18, 0.90))
+				draw_rect(ir, Color(0.88, 0.76, 0.38, 0.90), false, 1.4)
+				draw_string(font, ir.position + Vector2(5, 11), "【%s】Lv%d (P%d)" % [str(ht["name"]), int(ht["level"]), int(director.tower_owners.get(htuid, 1))], HORIZONTAL_ALIGNMENT_LEFT, 110, 7, Color(1.0, 0.94, 0.42))
+				draw_string(font, ir.position + Vector2(5, 22), "射程:%d 升级:%dG" % [int(ht.get("range", 0)), int(ht.get("upgrade_cost", 60))], HORIZONTAL_ALIGNMENT_LEFT, 110, 6, Color(0.80, 0.92, 1.0))
+				draw_string(font, ir.position + Vector2(5, 32), "左键升级 | [X]出售", HORIZONTAL_ALIGNMENT_LEFT, 110, 6, Color(0.75, 0.85, 0.78))
+
+	# 12. Full-Screen Cinematic Overlays (Intro Curtain, Wave Banner, Boss Cut-In, Synchro Ult Comets!)
+	vfx.draw_cinematic_overlays(self, font)

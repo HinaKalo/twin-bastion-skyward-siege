@@ -89,6 +89,19 @@ func _run_all() -> void:
 	ai.tick(0.1, dir)
 	_assert_eq(dir.synchro_pending_by, 0, "CoopAIPartner immediately confirms P1 Synchro Ultimate")
 
+	# 4b. BattleVFX & TowerArtRenderer Presentation Engine Tests
+	var bvfx := BattleVFX.new()
+	bvfx.init_ambient_motes("rift", 16)
+	_assert_eq(bvfx.ambient_motes.size(), 16, "BattleVFX spawns biome ambient motes")
+	bvfx.spawn_projectile(Vector2(50, 50), Vector2(150, 50), "arrow")
+	bvfx.play_boss_cutin("黑曜大魔王", "终极测试", null)
+	bvfx.play_synchro_ultimate_cinematic()
+	bvfx.tick(0.5)
+	_assert_true(bvfx.ult_cinematic_timer > 0.0 and bvfx.boss_cutin_timer > 0.0, "BattleVFX runs cinematic timers & projectiles cleanly")
+	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_1_twin_bridge"), "bridge", "Stage 1 maps to bridge biome")
+	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_2_rift_cross"), "rift", "Stage 2 maps to rift biome")
+	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_3_royal_siege"), "siege", "Stage 3 maps to siege biome")
+
 	# 5. Live Scene Smoke Tests + Engine Click-Through Invariant
 	for spath in [
 		"res://game/scenes/title_lobby.tscn",
