@@ -1,0 +1,39 @@
+{
+  "room.village_camp.name": "炉火营地",
+  "room.misty_forest.name": "暮雾林径",
+
+  "npc.camp_smith.name": "营地铁匠·老陆",
+  "npc.potion_merchant.name": "药剂商·青禾",
+
+  "item.iron_sword.name": "百炼铁剑",
+  "item.forest_blade.name": "翠风直剑",
+  "item.iron_helmet.name": "精铁护盔",
+  "item.leather_boots.name": "疾行皮靴",
+  "item.magic_ring.name": "灵犀指环",
+  "item.hp_potion.name": "生命药剂",
+  "item.apple_snack.name": "蜜烤红果",
+  "item.forest_emerald.name": "林间翠晶",
+
+  "enemy.weaver_spider.name": "织网林蛛",
+  "enemy.moss_golem.name": "苔石魔像",
+
+  "quest.q_forest_sweep.title": "肃清暮雾林径",
+  "quest.q_forest_sweep.obj_spiders": "击败织网林蛛",
+  "quest.q_forest_sweep.obj_golem": "击败精英·苔石魔像",
+  "quest.q_forest_sweep.turn_in": "返回炉火营地向老陆复命",
+
+  "dlg.smith.intro": "沈照，东边的暮雾林径最近不太平。织网林蛛和一尊苏醒的苔石魔像堵住了商路，能帮我清理一下吗？",
+  "dlg.smith.choice_accept": "交给我，我这就前往暮雾林径。",
+  "dlg.smith.choice_later": "我先整备一下装备。",
+  "dlg.smith.accepted": "多谢！这瓶生命药剂你先带上。林子里的怪物出手前会有红光预警，抓准时机按 [L] 可以完美弹反！",
+  "dlg.smith.in_progress": "暮雾林径就在营地最东侧的传送门外。顺着屏幕边缘的金色箭头走就不会迷路。",
+  "dlg.smith.turn_in": "干得漂亮！这把刚锻好的【翠风直剑】和赏金归你了，戴上多练练还能解锁永久精通加成！",
+  "dlg.smith.after_complete": "商路畅通无阻了。营地篝火随时可以存档，按 [I] 可以随时查看装备精通进度。",
+
+  "dlg.merchant.greet": "欢迎光临！旅途劳顿，需要调理伤势还是补充生命药剂？（当前持有金币：{gold}）",
+  "dlg.merchant.choice_heal": "帮我恢复体力（免费）",
+  "dlg.merchant.choice_buy_potion": "购买生命药剂（30 金币）",
+  "dlg.merchant.choice_bye": "暂时不用，谢谢。",
+  "dlg.merchant.healed": "状态已经全部恢复了，祝你武运昌隆！",
+  "dlg.merchant.bought": "药剂已经放进你的背包，按数字键 [1] 即可在战斗中快捷饮用。"
+}

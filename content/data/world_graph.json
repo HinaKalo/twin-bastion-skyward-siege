@@ -1,0 +1,27 @@
+{
+  "start_room": "village_camp",
+  "rooms": {
+    "village_camp": {
+      "name_key": "room.village_camp.name",
+      "scene": "res://game/rooms/village_camp.tscn",
+      "biome": "village",
+      "bgm": "bgm.village",
+      "bounds": [0, 0, 720, 270],
+      "map_grid": [0, 0],
+      "connections": [
+        { "to_room": "misty_forest", "portal_id": "portal:misty_forest" }
+      ]
+    },
+    "misty_forest": {
+      "name_key": "room.misty_forest.name",
+      "scene": "res://game/rooms/misty_forest.tscn",
+      "biome": "forest",
+      "bgm": "bgm.forest",
+      "bounds": [0, 0, 1120, 270],
+      "map_grid": [1, 0],
+      "connections": [
+        { "to_room": "village_camp", "portal_id": "portal:village_camp" }
+      ]
+    }
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "dialogues": {
+    "camp_smith_talk": {
+      "id": "camp_smith_talk",
+      "start": "router",
+      "nodes": {
+        "router": {
+          "type": "branch",
+          "branches": [
+            { "condition": "quest_q_forest_sweep == 3", "next": "after_complete" },
+            { "condition": "quest_q_forest_sweep == 2", "next": "turn_in" },
+            { "condition": "quest_q_forest_sweep == 1", "next": "in_progress" }
+          ],
+          "default": "intro"
+        },
+        "intro": {
+          "speaker_key": "npc.camp_smith.name",
+          "portrait_key": "npc.camp_smith",
+          "text_key": "dlg.smith.intro",
+          "choices": [
+            {
+              "text_key": "dlg.smith.choice_accept",
+              "actions": [
+                { "type": "start_quest", "quest_id": "q_forest_sweep" },
+                { "type": "give_item", "item_id": "hp_potion", "count": 1 }
+              ],
+              "next": "accepted"
+            },
+            {
+              "text_key": "dlg.smith.choice_later",
+              "next": ""
+            }
+          ]
+        },
+        "accepted": {
+          "speaker_key": "npc.camp_smith.name",
+          "portrait_key": "npc.camp_smith",
+          "text_key": "dlg.smith.accepted",
+          "next": ""
+        },
+        "in_progress": {
+          "speaker_key": "npc.camp_smith.name",
+          "portrait_key": "npc.camp_smith",
+          "text_key": "dlg.smith.in_progress",
+          "next": ""
+        },
+        "turn_in": {
+          "speaker_key": "npc.camp_smith.name",
+          "portrait_key": "npc.camp_smith",
+          "text_key": "dlg.smith.turn_in",
+          "actions": [
+            { "type": "complete_quest", "quest_id": "q_forest_sweep" }
+          ],
+          "next": ""
+        },
+        "after_complete": {
+          "speaker_key": "npc.camp_smith.name",
+          "portrait_key": "npc.camp_smith",
+          "text_key": "dlg.smith.after_complete",
+          "next": ""
+        }
+      }
+    },
+    "potion_merchant_talk": {
+      "id": "potion_merchant_talk",
+      "start": "greet",
+      "nodes": {
+        "greet": {
+          "speaker_key": "npc.potion_merchant.name",
+          "portrait_key": "npc.potion_merchant",
+          "text_key": "dlg.merchant.greet",
+          "choices": [
+            {
+              "text_key": "dlg.merchant.choice_heal",
+              "actions": [
+                { "type": "heal_player" }
+              ],
+              "next": "healed"
+            },
+            {
+              "text_key": "dlg.merchant.choice_buy_potion",
+              "condition": "gold >= 30",
+              "actions": [
+                { "type": "add_gold", "amount": -30 },
+                { "type": "give_item", "item_id": "hp_potion", "count": 1 }
+              ],
+              "next": "bought"
+            },
+            {
+              "text_key": "dlg.merchant.choice_bye",
+              "next": ""
+            }
+          ]
+        },
+        "healed": {
+          "speaker_key": "npc.potion_merchant.name",
+          "portrait_key": "npc.potion_merchant",
+          "text_key": "dlg.merchant.healed",
+          "next": ""
+        },
+        "bought": {
+          "speaker_key": "npc.potion_merchant.name",
+          "portrait_key": "npc.potion_merchant",
+          "text_key": "dlg.merchant.bought",
+          "next": ""
+        }
+      }
+    }
+  }
+}

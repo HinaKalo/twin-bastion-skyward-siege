@@ -1,0 +1,35 @@
+{
+  "arcs": {
+    "main_plot": {
+      "initial": "camp_arrival",
+      "states": {
+        "camp_arrival": {
+          "transitions": [
+            { "to": "forest_expedition", "when": "tag_accepted_forest_hunt" }
+          ]
+        },
+        "forest_expedition": {
+          "on_enter": [
+            { "type": "bb_tag", "tag": "chapter1_active" }
+          ],
+          "transitions": [
+            { "to": "hero_path", "when": "flag_forest_cleared and karma >= 10" },
+            { "to": "lone_wolf_path", "when": "flag_forest_cleared and karma < 10" }
+          ]
+        },
+        "hero_path": {
+          "on_enter": [
+            { "type": "bb_tag", "tag": "ending_hero_unlocked" }
+          ],
+          "transitions": []
+        },
+        "lone_wolf_path": {
+          "on_enter": [
+            { "type": "bb_tag", "tag": "ending_lone_wolf_unlocked" }
+          ],
+          "transitions": []
+        }
+      }
+    }
+  }
+}

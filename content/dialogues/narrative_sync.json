@@ -1,0 +1,34 @@
+{
+  "dialogues": {
+    "nn_scene_01_omen": {
+      "id": "nn_scene_01_omen",
+      "source_scene_id": "scene_01_omen",
+      "start": "line_0",
+      "nodes": {
+        "line_0": {
+          "speaker_key": "nn.entity.ent_old_lu.name",
+          "portrait_key": "npc.camp_smith",
+          "text_key": "nn.nn_scene_01_omen.line_0",
+          "next": "line_1"
+        },
+        "line_1": {
+          "speaker_key": "nn.entity.ent_shen_zhao.name",
+          "portrait_key": "player.shen_zhao",
+          "text_key": "nn.nn_scene_01_omen.line_1",
+          "next": "",
+          "actions": [
+            {
+              "type": "set_flag",
+              "flag": "know_moss_golem_awakened",
+              "value": true
+            },
+            {
+              "type": "start_quest",
+              "quest_id": "q_forest_sweep"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

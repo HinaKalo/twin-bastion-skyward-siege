@@ -1,0 +1,59 @@
+{
+  "id": "sluice_warden",
+  "name": "闸门守卫",
+  "description": "Example multi-phase boss: venting the sluice valves exposes the knee joint. Solo players vent both valves within 5 s (delayed interlock); duo players vent them together (parallel, two seats within 0.75 s).",
+  "hp": 1200,
+  "closed_damage_scale": 0.2,
+  "surrender": { "hp_below": 0.04 },
+  "phases": [
+    {
+      "id": "p1_pressure",
+      "entry_hp": 1.0,
+      "opening_delay": 40,
+      "attacks": [
+        { "id": "piston_slam", "telegraph": 36, "active": 8, "recovery": 40, "pose": "raise_arm", "sound": "sfx.danger_low", "haptic": "warn_low",
+          "areas": [[180, 0, 96, 40]], "opening": { "window": "wrist", "ticks": 40 } },
+        { "id": "steam_sweep", "telegraph": 30, "active": 18, "recovery": 30, "pose": "crouch_vent", "sound": "sfx.danger_hiss", "haptic": "warn_sweep",
+          "areas": [[0, 0, 200, 24]] }
+      ],
+      "mechanisms": {
+        "sluice": {
+          "parts": ["valve_left", "valve_right"],
+          "opens": "knee_joint",
+          "window_ticks": 240,
+          "solo": { "mode": "interlock", "within": 300 },
+          "duo": { "mode": "parallel", "within": 45, "seats": 2 }
+        }
+      },
+      "windows": {
+        "wrist": { "damage_scale": 0.6 },
+        "knee_joint": { "damage_scale": 1.5, "ticks": 240 }
+      }
+    },
+    {
+      "id": "p2_flood",
+      "entry_hp": 0.55,
+      "opening_delay": 60,
+      "arena_change": "flood_low_floor",
+      "attacks": [
+        { "id": "flood_wave", "telegraph": 42, "active": 24, "recovery": 36, "pose": "open_gate", "sound": "sfx.danger_wave", "haptic": "warn_wave",
+          "areas": [[0, 0, 320, 20]], "opening": { "window": "gate_core", "ticks": 50 } },
+        { "id": "piston_slam", "telegraph": 30, "active": 8, "recovery": 34, "pose": "raise_arm", "sound": "sfx.danger_low", "haptic": "warn_low",
+          "areas": [[200, 0, 96, 40]] }
+      ],
+      "mechanisms": {
+        "sluice": {
+          "parts": ["valve_left", "valve_right"],
+          "opens": "knee_joint",
+          "window_ticks": 200,
+          "solo": { "mode": "interlock", "within": 240 },
+          "duo": { "mode": "parallel", "within": 45, "seats": 2 }
+        }
+      },
+      "windows": {
+        "gate_core": { "damage_scale": 1.0 },
+        "knee_joint": { "damage_scale": 1.5, "ticks": 200 }
+      }
+    }
+  ]
+}

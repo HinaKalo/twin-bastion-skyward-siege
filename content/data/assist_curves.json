@@ -1,0 +1,7 @@
+{
+  "description": "Checkpoint failure assist: incoming player damage scale after N team wipes on the same segment. Reset when the segment is passed. Boss HP / moves / phase conditions are never modified.",
+  "curve": [
+    { "failures": 5, "damage_scale": 0.92 },
+    { "failures": 10, "damage_scale": 0.85 }
+  ]
+}

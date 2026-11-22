@@ -1,0 +1,1402 @@
+{
+  "schema_version": "1.0",
+  "pack_id": "koei_demo",
+  "display_name": "Koei Pixel Items Demo Pack",
+  "base_dir": "res://content/packs/koei_demo/assets",
+  "actors": {
+    "player.shen_zhao": {
+      "display_name": "沈照",
+      "pivot": [
+        96,
+        126
+      ],
+      "frame_size": [
+        192,
+        144
+      ],
+      "flip_horizontal": true,
+      "portrait": "player.shen_zhao",
+      "actions": {
+        "idle": {
+          "file": "actors/player/idle.png",
+          "frames": 12,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            117,
+            117,
+            117,
+            117,
+            117,
+            117,
+            117,
+            117,
+            117,
+            117,
+            117,
+            117
+          ],
+          "loop": true,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {}
+        },
+        "walk": {
+          "file": "actors/player/walk.png",
+          "frames": 12,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            77,
+            77,
+            77,
+            77,
+            77,
+            77,
+            109,
+            77,
+            77,
+            77,
+            77,
+            77
+          ],
+          "loop": true,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "contact": 6
+          }
+        },
+        "run": {
+          "file": "actors/player/run.png",
+          "frames": 10,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            65,
+            63,
+            60,
+            61,
+            65,
+            65,
+            63,
+            60,
+            61,
+            65
+          ],
+          "loop": true,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "contact": 0,
+            "secondContact": 5
+          }
+        },
+        "jump": {
+          "file": "actors/player/jump.png",
+          "frames": 18,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            61,
+            87,
+            61,
+            61,
+            75
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "takeoff": 4,
+            "apex": 9,
+            "contact": 14
+          }
+        },
+        "dodge": {
+          "file": "actors/player/dodge.png",
+          "frames": 12,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            58,
+            58,
+            58,
+            58,
+            58,
+            82,
+            58,
+            58,
+            58,
+            58,
+            58,
+            71
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 5,
+            "settle": 11
+          }
+        },
+        "hurt": {
+          "file": "actors/player/hurt.png",
+          "frames": 10,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            65,
+            65,
+            93,
+            65,
+            65,
+            65,
+            65,
+            65,
+            65,
+            81
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 2,
+            "settle": 9
+          }
+        },
+        "guard": {
+          "file": "actors/player/guard.png",
+          "frames": 14,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            62,
+            62,
+            62,
+            62,
+            62,
+            62,
+            88,
+            62,
+            62,
+            62,
+            62,
+            62,
+            62,
+            76
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 6,
+            "settle": 13
+          }
+        },
+        "attack_light": {
+          "file": "actors/player/attack_light.png",
+          "frames": 10,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            53,
+            53,
+            53,
+            53,
+            76,
+            53,
+            53,
+            53,
+            53,
+            66
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 4
+          }
+        },
+        "attack_light_2": {
+          "file": "actors/player/attack_light_2.png",
+          "frames": 14,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            67,
+            67,
+            67,
+            67,
+            67,
+            67,
+            67,
+            67,
+            95,
+            67,
+            67,
+            67,
+            67,
+            82
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 8
+          }
+        },
+        "attack_heavy": {
+          "file": "actors/player/attack_heavy.png",
+          "frames": 14,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            65,
+            65,
+            65,
+            65,
+            65,
+            65,
+            65,
+            93,
+            65,
+            65,
+            65,
+            65,
+            65,
+            81
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 7
+          }
+        },
+        "skill_ultimate": {
+          "file": "actors/player/skill_ultimate.png",
+          "frames": 20,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            62,
+            62,
+            62,
+            62,
+            62,
+            62,
+            62,
+            88,
+            62,
+            62,
+            62,
+            62,
+            62,
+            62,
+            88,
+            62,
+            62,
+            62,
+            62,
+            76
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 7,
+            "secondAccent": 14
+          }
+        },
+        "deflect": {
+          "file": "actors/player/deflect.png",
+          "frames": 14,
+          "frame_size": [
+            192,
+            144
+          ],
+          "durations_ms": [
+            60,
+            60,
+            60,
+            60,
+            60,
+            60,
+            85,
+            60,
+            85,
+            60,
+            60,
+            60,
+            60,
+            74
+          ],
+          "loop": false,
+          "pivot": [
+            96,
+            126
+          ],
+          "cues": {
+            "accent": 6,
+            "secondAccent": 8
+          }
+        }
+      }
+    },
+    "enemy.weaver_spider": {
+      "display_name": "织网林蛛",
+      "pivot": [
+        32,
+        59
+      ],
+      "frame_size": [
+        64,
+        64
+      ],
+      "flip_horizontal": true,
+      "actions": {
+        "idle": {
+          "file": "actors/weaver_spider/idle.png",
+          "frames": 4,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            135,
+            135,
+            135,
+            135
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "run": {
+          "file": "actors/weaver_spider/run.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            95,
+            95,
+            95,
+            95,
+            95,
+            95
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "attack": {
+          "file": "actors/weaver_spider/attack.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            88,
+            88,
+            88,
+            88,
+            88,
+            88
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "accent": 2
+          }
+        },
+        "hurt": {
+          "file": "actors/weaver_spider/hurt.png",
+          "frames": 4,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            85,
+            85,
+            85,
+            85
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "jump": {
+          "file": "actors/weaver_spider/jump.png",
+          "frames": 5,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            70,
+            65,
+            75,
+            85,
+            105
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "takeoff": 2
+          }
+        },
+        "dodge": {
+          "file": "actors/weaver_spider/dodge.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            65,
+            70,
+            70,
+            75,
+            85,
+            85
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "dash": 2
+          }
+        },
+        "death": {
+          "file": "actors/weaver_spider/death.png",
+          "frames": 7,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            70,
+            85,
+            90,
+            100,
+            115,
+            150,
+            230
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "collapse": 4
+          }
+        }
+      }
+    },
+    "enemy.moss_golem": {
+      "display_name": "苔石魔像",
+      "pivot": [
+        32,
+        59
+      ],
+      "frame_size": [
+        64,
+        64
+      ],
+      "flip_horizontal": true,
+      "actions": {
+        "idle": {
+          "file": "actors/moss_golem/idle.png",
+          "frames": 4,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            135,
+            135,
+            135,
+            135
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "run": {
+          "file": "actors/moss_golem/run.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            95,
+            95,
+            95,
+            95,
+            95,
+            95
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "attack": {
+          "file": "actors/moss_golem/attack.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            88,
+            88,
+            88,
+            88,
+            88,
+            88
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "accent": 2
+          }
+        },
+        "hurt": {
+          "file": "actors/moss_golem/hurt.png",
+          "frames": 4,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            85,
+            85,
+            85,
+            85
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "jump": {
+          "file": "actors/moss_golem/jump.png",
+          "frames": 5,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            70,
+            65,
+            75,
+            85,
+            105
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "takeoff": 2
+          }
+        },
+        "dodge": {
+          "file": "actors/moss_golem/dodge.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            65,
+            70,
+            70,
+            75,
+            85,
+            85
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "dash": 2
+          }
+        },
+        "death": {
+          "file": "actors/moss_golem/death.png",
+          "frames": 7,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            70,
+            85,
+            90,
+            100,
+            115,
+            150,
+            230
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "collapse": 4
+          }
+        }
+      }
+    },
+    "enemy.royal_knight": {
+      "display_name": "堕落骑士",
+      "pivot": [
+        32,
+        59
+      ],
+      "frame_size": [
+        64,
+        64
+      ],
+      "flip_horizontal": true,
+      "actions": {
+        "idle": {
+          "file": "actors/royal_knight/idle.png",
+          "frames": 4,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            135,
+            135,
+            135,
+            135
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "run": {
+          "file": "actors/royal_knight/run.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            95,
+            95,
+            95,
+            95,
+            95,
+            95
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "attack": {
+          "file": "actors/royal_knight/attack.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            88,
+            88,
+            88,
+            88,
+            88,
+            88
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "accent": 2
+          }
+        },
+        "hurt": {
+          "file": "actors/royal_knight/hurt.png",
+          "frames": 4,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            85,
+            85,
+            85,
+            85
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        },
+        "jump": {
+          "file": "actors/royal_knight/jump.png",
+          "frames": 5,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            70,
+            65,
+            75,
+            85,
+            105
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "takeoff": 2
+          }
+        },
+        "dodge": {
+          "file": "actors/royal_knight/dodge.png",
+          "frames": 6,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            65,
+            70,
+            70,
+            75,
+            85,
+            85
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "dash": 2
+          }
+        },
+        "death": {
+          "file": "actors/royal_knight/death.png",
+          "frames": 7,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            70,
+            85,
+            90,
+            100,
+            115,
+            150,
+            230
+          ],
+          "loop": false,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {
+            "collapse": 4
+          }
+        }
+      }
+    },
+    "npc.camp_smith": {
+      "display_name": "营地铁匠·老陆",
+      "pivot": [
+        32,
+        59
+      ],
+      "frame_size": [
+        64,
+        64
+      ],
+      "flip_horizontal": true,
+      "portrait": "npc.camp_smith",
+      "actions": {
+        "idle": {
+          "file": "actors/camp_smith/idle.png",
+          "frames": 1,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            500
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        }
+      }
+    },
+    "npc.potion_merchant": {
+      "display_name": "药剂商·青禾",
+      "pivot": [
+        32,
+        59
+      ],
+      "frame_size": [
+        64,
+        64
+      ],
+      "flip_horizontal": true,
+      "portrait": "npc.potion_merchant",
+      "actions": {
+        "idle": {
+          "file": "actors/potion_merchant/idle.png",
+          "frames": 1,
+          "frame_size": [
+            64,
+            64
+          ],
+          "durations_ms": [
+            500
+          ],
+          "loop": true,
+          "pivot": [
+            32,
+            59
+          ],
+          "cues": {}
+        }
+      }
+    }
+  },
+  "portraits": {
+    "player.shen_zhao": "actors/player/standing.png",
+    "npc.camp_smith": "portraits/camp_smith.png",
+    "npc.potion_merchant": "portraits/potion_merchant.png"
+  },
+  "biomes": {
+    "village": {
+      "parallax": [
+        {
+          "name": "sky",
+          "file": "biomes/village/bg_sky.png",
+          "parallax_x": 0.18,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        },
+        {
+          "name": "far",
+          "file": "biomes/village/bg_far.png",
+          "parallax_x": 0.38,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        },
+        {
+          "name": "mid",
+          "file": "biomes/village/bg_mid.png",
+          "parallax_x": 0.6,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        },
+        {
+          "name": "front",
+          "file": "biomes/village/bg_front.png",
+          "parallax_x": 1.22,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        }
+      ],
+      "tiles": {
+        "surface": "biomes/village/tile_surface.png",
+        "fill": "biomes/village/tile_fill.png",
+        "platform": "biomes/village/tile_platform.png",
+        "wall": "biomes/village/tile_wall.png"
+      }
+    },
+    "forest": {
+      "parallax": [
+        {
+          "name": "sky",
+          "file": "biomes/forest/bg_sky.png",
+          "parallax_x": 0.18,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        },
+        {
+          "name": "far",
+          "file": "biomes/forest/bg_far.png",
+          "parallax_x": 0.38,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        },
+        {
+          "name": "mid",
+          "file": "biomes/forest/bg_mid.png",
+          "parallax_x": 0.6,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        },
+        {
+          "name": "front",
+          "file": "biomes/forest/bg_front.png",
+          "parallax_x": 1.22,
+          "repeat_x": true,
+          "width": 384,
+          "height": 160
+        }
+      ],
+      "tiles": {
+        "surface": "biomes/forest/tile_surface.png",
+        "fill": "biomes/forest/tile_fill.png",
+        "platform": "biomes/forest/tile_platform.png",
+        "wall": "biomes/forest/tile_wall.png"
+      }
+    }
+  },
+  "props": {
+    "campfire": "props/campfire.png",
+    "chest": "props/chest.png",
+    "barrel": "props/barrel.png",
+    "tree": "props/tree.png",
+    "bush": "props/bush.png",
+    "tile_marble": "props/tile_marble.png",
+    "tile_flagstone": "props/tile_flagstone.png",
+    "tile_planks": "props/tile_planks.png",
+    "tile_brick_wall": "props/tile_brick_wall.png",
+    "tile_wood_wall": "props/tile_wood_wall.png",
+    "tile_meadow": "props/tile_meadow.png",
+    "tile_moss": "props/tile_moss.png",
+    "tile_dirt": "props/tile_dirt.png",
+    "tile_water": "props/tile_water.png"
+  },
+  "icons": {
+    "sword_iron": "icons/sword_iron.png",
+    "bow_wood": "icons/bow_wood.png",
+    "helmet_iron": "icons/helmet_iron.png",
+    "boots_leather": "icons/boots_leather.png",
+    "ring_magic": "icons/ring_magic.png",
+    "potion_hp": "icons/potion_hp.png",
+    "potion_mp": "icons/potion_mp.png",
+    "food_apple": "icons/food_apple.png",
+    "quest_key": "icons/quest_key.png",
+    "mat_emerald": "icons/mat_emerald.png",
+    "mat_herb": "icons/mat_herb.png",
+    "coin_pouch": "icons/coin_pouch.png"
+  },
+  "ui": {
+    "panel_wood": {
+      "file": "ui/panel_wood.png",
+      "nine_slice": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill_box": null
+    },
+    "panel_stone": {
+      "file": "ui/panel_stone.png",
+      "nine_slice": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill_box": null
+    },
+    "panel_dialog": {
+      "file": "ui/panel_dialog.png",
+      "nine_slice": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill_box": null
+    },
+    "panel_iron": {
+      "file": "ui/panel_iron.png",
+      "nine_slice": [
+        6,
+        6,
+        6,
+        6
+      ],
+      "fill_box": null
+    },
+    "slot_default": {
+      "file": "ui/slot_default.png",
+      "nine_slice": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "fill_box": null
+    },
+    "bar_empty": {
+      "file": "ui/bar_empty.png",
+      "nine_slice": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "fill_box": null
+    },
+    "bar_hp": {
+      "file": "ui/bar_hp.png",
+      "nine_slice": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "fill_box": {
+        "x": 2,
+        "y": 2,
+        "width": 44,
+        "height": 4
+      }
+    },
+    "bar_st": {
+      "file": "ui/bar_st.png",
+      "nine_slice": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "fill_box": {
+        "x": 2,
+        "y": 2,
+        "width": 44,
+        "height": 4
+      }
+    },
+    "bar_xp": {
+      "file": "ui/bar_xp.png",
+      "nine_slice": [
+        4,
+        4,
+        4,
+        4
+      ],
+      "fill_box": {
+        "x": 2,
+        "y": 2,
+        "width": 44,
+        "height": 4
+      }
+    }
+  },
+  "vfx": {
+    "hit_spark": {
+      "file": "vfx/hit_spark.png",
+      "frames": 4,
+      "frame_size": [
+        32,
+        32
+      ],
+      "durations_ms": [
+        60,
+        60,
+        60,
+        60
+      ],
+      "loop": false,
+      "pivot": [
+        16,
+        16
+      ],
+      "cues": {}
+    },
+    "slash": {
+      "file": "vfx/slash.png",
+      "frames": 5,
+      "frame_size": [
+        32,
+        32
+      ],
+      "durations_ms": [
+        65,
+        70,
+        70,
+        80,
+        90
+      ],
+      "loop": false,
+      "pivot": [
+        16,
+        16
+      ],
+      "cues": {}
+    }
+  },
+  "audio": {
+    "bgm.village": {
+      "file": "audio/bgm/village.ogg",
+      "usage": "bgm",
+      "loop": true,
+      "loop_start_ms": 0,
+      "loop_end_ms": 28416,
+      "crossfade_ms": 600
+    },
+    "bgm.forest": {
+      "file": "audio/bgm/forest.ogg",
+      "usage": "bgm",
+      "loop": true,
+      "loop_start_ms": 0,
+      "loop_end_ms": 30336,
+      "crossfade_ms": 600
+    },
+    "bgm.boss": {
+      "file": "audio/bgm/boss.ogg",
+      "usage": "bgm",
+      "loop": true,
+      "loop_start_ms": 0,
+      "loop_end_ms": 25976,
+      "crossfade_ms": 600
+    },
+    "sfx.jump": {
+      "file": "audio/sfx/jump.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 260,
+      "crossfade_ms": 0
+    },
+    "sfx.land": {
+      "file": "audio/sfx/land.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 240,
+      "crossfade_ms": 0
+    },
+    "sfx.dash": {
+      "file": "audio/sfx/dash.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 310,
+      "crossfade_ms": 0
+    },
+    "sfx.swing_light": {
+      "file": "audio/sfx/swing_light.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 240,
+      "crossfade_ms": 0
+    },
+    "sfx.swing_heavy": {
+      "file": "audio/sfx/swing_heavy.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 350,
+      "crossfade_ms": 0
+    },
+    "sfx.hit": {
+      "file": "audio/sfx/hit.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 260,
+      "crossfade_ms": 0
+    },
+    "sfx.block": {
+      "file": "audio/sfx/block.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 390,
+      "crossfade_ms": 0
+    },
+    "sfx.hurt": {
+      "file": "audio/sfx/hurt.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 260,
+      "crossfade_ms": 0
+    },
+    "sfx.collect": {
+      "file": "audio/sfx/collect.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 270,
+      "crossfade_ms": 0
+    },
+    "sfx.checkpoint": {
+      "file": "audio/sfx/checkpoint.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 730,
+      "crossfade_ms": 0
+    },
+    "sfx.door": {
+      "file": "audio/sfx/door.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 620,
+      "crossfade_ms": 0
+    },
+    "sfx.ui_confirm": {
+      "file": "audio/sfx/ui_confirm.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 160,
+      "crossfade_ms": 0
+    },
+    "sfx.ui_back": {
+      "file": "audio/sfx/ui_back.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 170,
+      "crossfade_ms": 0
+    },
+    "sfx.quest_clear": {
+      "file": "audio/sfx/quest_clear.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 870,
+      "crossfade_ms": 0
+    },
+    "sfx.magic": {
+      "file": "audio/sfx/magic.wav",
+      "usage": "sfx",
+      "loop": false,
+      "loop_start_ms": 0,
+      "loop_end_ms": 550,
+      "crossfade_ms": 0
+    }
+  }
+}

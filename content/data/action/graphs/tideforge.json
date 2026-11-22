@@ -1,0 +1,569 @@
+{
+  "id": "tideforge",
+  "description": "Tideforge (潮汐铸城) six-weapon action graph. Rows default to hook_blade; apply a weapon from content/data/action/weapons/ via ActionGraph.with_weapon().",
+  "max_links": 5,
+  "hit_cancel_delay": 1,
+  "hit_cancel_window": 13,
+  "startup_cancel": 0,
+  "input_priority": [
+    "heavy",
+    "light"
+  ],
+  "moves": {
+    "light_1": {
+      "tags": [
+        "light",
+        "attack",
+        "chain_light"
+      ],
+      "row": [
+        5,
+        5,
+        11,
+        14.0,
+        67,
+        85.8,
+        4,
+        18,
+        0,
+        5
+      ]
+    },
+    "light_2": {
+      "tags": [
+        "light",
+        "attack",
+        "chain_light"
+      ],
+      "row": [
+        7,
+        5,
+        12,
+        13.02,
+        80,
+        111.8,
+        5,
+        26,
+        0,
+        41
+      ]
+    },
+    "light_3": {
+      "tags": [
+        "light",
+        "attack",
+        "chain_light"
+      ],
+      "row": [
+        9,
+        6,
+        16,
+        18.2,
+        84,
+        137.8,
+        6,
+        34,
+        0,
+        52
+      ]
+    },
+    "air_1": {
+      "tags": [
+        "light",
+        "attack",
+        "air"
+      ],
+      "hit": {
+        "y_top": 72
+      },
+      "row": [
+        5,
+        5,
+        11,
+        14.7,
+        67,
+        85.8,
+        4,
+        18,
+        0,
+        5
+      ]
+    },
+    "air_2": {
+      "tags": [
+        "light",
+        "attack",
+        "air"
+      ],
+      "hit": {
+        "y_top": 72
+      },
+      "row": [
+        7,
+        5,
+        12,
+        13.671,
+        80,
+        111.8,
+        5,
+        26,
+        1,
+        41
+      ]
+    },
+    "air_3": {
+      "tags": [
+        "light",
+        "attack",
+        "air"
+      ],
+      "hit": {
+        "y_top": 72
+      },
+      "row": [
+        9,
+        6,
+        16,
+        19.11,
+        84,
+        137.8,
+        6,
+        34,
+        0,
+        52
+      ]
+    },
+    "heavy": {
+      "tags": [
+        "heavy",
+        "attack",
+        "chain_heavy"
+      ],
+      "row": [
+        9,
+        6,
+        15,
+        22.12,
+        103,
+        157,
+        6,
+        59,
+        0,
+        23
+      ]
+    },
+    "cleave": {
+      "tags": [
+        "heavy",
+        "attack",
+        "chain_heavy",
+        "signature"
+      ],
+      "row": [
+        9,
+        8,
+        16,
+        19.88,
+        104,
+        170,
+        6,
+        52,
+        1,
+        17
+      ]
+    },
+    "reprise": {
+      "tags": [
+        "light",
+        "attack",
+        "chain_light"
+      ],
+      "row": [
+        5,
+        6,
+        12,
+        13.44,
+        81,
+        107,
+        4,
+        22,
+        1,
+        2
+      ]
+    },
+    "delay_cut": {
+      "tags": [
+        "light",
+        "attack",
+        "chain_light"
+      ],
+      "row": [
+        7,
+        7,
+        17,
+        19.18,
+        88,
+        145,
+        6,
+        46,
+        1,
+        9
+      ]
+    },
+    "launcher": {
+      "tags": [
+        "heavy",
+        "attack",
+        "chain_heavy",
+        "launcher"
+      ],
+      "hit": {
+        "y_top": 72
+      },
+      "row": [
+        8,
+        5,
+        18,
+        17.08,
+        75,
+        65,
+        5,
+        51,
+        0,
+        7
+      ]
+    },
+    "lunge": {
+      "tags": [
+        "heavy",
+        "attack",
+        "chain_heavy",
+        "command"
+      ],
+      "row": [
+        7,
+        6,
+        19,
+        19.32,
+        93,
+        193,
+        6,
+        48,
+        0,
+        4
+      ]
+    },
+    "dash_cut": {
+      "tags": [
+        "light",
+        "attack",
+        "chain_light",
+        "chain_heavy"
+      ],
+      "row": [
+        5,
+        6,
+        14,
+        15.54,
+        79,
+        133,
+        5,
+        25,
+        0,
+        3
+      ]
+    },
+    "pivot_cut": {
+      "tags": [
+        "light",
+        "attack",
+        "chain_light",
+        "chain_heavy",
+        "signature"
+      ],
+      "row": [
+        5,
+        7,
+        13,
+        15.96,
+        90,
+        137,
+        5,
+        37,
+        1,
+        6
+      ]
+    },
+    "counter": {
+      "tags": [
+        "heavy",
+        "attack",
+        "chain_heavy"
+      ],
+      "row": [
+        5,
+        6,
+        13,
+        28.0,
+        93,
+        180,
+        7,
+        91,
+        0,
+        30
+      ]
+    },
+    "dive": {
+      "tags": [
+        "attack",
+        "dive",
+        "pogo"
+      ],
+      "hit": {
+        "y_top": 10,
+        "y_bottom": 90
+      },
+      "row": [
+        4,
+        24,
+        10,
+        18.9,
+        55,
+        195,
+        7,
+        64,
+        1,
+        0
+      ]
+    }
+  },
+  "edges": [
+    {
+      "from": "free",
+      "input": "light",
+      "to": "pivot_cut",
+      "priority": 8,
+      "dir": "back",
+      "turn": true,
+      "when": {
+        "flags": {
+          "dash_tail": true
+        }
+      }
+    },
+    {
+      "from": "free",
+      "input": "light",
+      "to": "dash_cut",
+      "priority": 7,
+      "when": {
+        "flags": {
+          "dash_tail": true
+        }
+      }
+    },
+    {
+      "from": "free",
+      "input": "heavy",
+      "to": "counter",
+      "priority": 9,
+      "when": {
+        "flags": {
+          "counter": true
+        }
+      }
+    },
+    {
+      "from": "free",
+      "input": "light",
+      "to": "dive",
+      "priority": 6,
+      "dir": "down",
+      "when": {
+        "grounded": false
+      }
+    },
+    {
+      "from": "free",
+      "input": "light",
+      "to": "air_1",
+      "priority": 2,
+      "when": {
+        "grounded": false
+      }
+    },
+    {
+      "from": "free",
+      "input": "heavy",
+      "to": "dive",
+      "priority": 2,
+      "when": {
+        "grounded": false
+      }
+    },
+    {
+      "from": "free",
+      "input": "light",
+      "to": "light_1",
+      "priority": 0,
+      "dir": "any",
+      "turn": true,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "free",
+      "input": "heavy",
+      "to": "lunge",
+      "priority": 5,
+      "command": "qcf",
+      "turn": true,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "free",
+      "input": "heavy",
+      "to": "launcher",
+      "priority": 4,
+      "dir": "up",
+      "command": "launcher",
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "free",
+      "input": "heavy",
+      "to": "heavy",
+      "priority": 0,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "light_1",
+      "input": "light",
+      "to": "light_2",
+      "priority": 0,
+      "turn": true,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "light_2",
+      "input": "light",
+      "to": "delay_cut",
+      "priority": 6,
+      "when": {
+        "grounded": true,
+        "min_delay": 2,
+        "fresh": 3
+      }
+    },
+    {
+      "from": "light_2",
+      "input": "light",
+      "to": "light_3",
+      "priority": 0,
+      "turn": true,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "tag:chain_light",
+      "input": "heavy",
+      "to": "lunge",
+      "priority": 5,
+      "command": "qcf",
+      "turn": true,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "tag:chain_light",
+      "input": "heavy",
+      "to": "launcher",
+      "priority": 4,
+      "dir": "up",
+      "command": "launcher",
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "tag:chain_light",
+      "input": "heavy",
+      "to": "cleave",
+      "priority": 0,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "tag:chain_heavy",
+      "input": "light",
+      "to": "reprise",
+      "priority": 0,
+      "turn": true,
+      "when": {
+        "grounded": true
+      }
+    },
+    {
+      "from": "tag:chain_heavy",
+      "input": "light",
+      "to": "air_1",
+      "priority": 0,
+      "when": {
+        "grounded": false
+      }
+    },
+    {
+      "from": "air_1",
+      "input": "light",
+      "to": "dive",
+      "priority": 6,
+      "dir": "down"
+    },
+    {
+      "from": "air_2",
+      "input": "light",
+      "to": "dive",
+      "priority": 6,
+      "dir": "down"
+    },
+    {
+      "from": "air_1",
+      "input": "light",
+      "to": "air_2",
+      "priority": 0,
+      "when": {
+        "air_count_lt": 3
+      }
+    },
+    {
+      "from": "air_2",
+      "input": "light",
+      "to": "air_3",
+      "priority": 0,
+      "when": {
+        "air_count_lt": 3
+      }
+    },
+    {
+      "from": "tag:air",
+      "input": "heavy",
+      "to": "dive",
+      "priority": 0,
+      "when": {
+        "grounded": false
+      }
+    }
+  ]
+}

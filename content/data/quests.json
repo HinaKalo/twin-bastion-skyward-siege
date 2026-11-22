@@ -1,0 +1,38 @@
+{
+  "quests": [
+    {
+      "id": "q_forest_sweep",
+      "title_key": "quest.q_forest_sweep.title",
+      "giver_npc": "npc.camp_smith",
+      "turn_in_npc": "npc.camp_smith",
+      "turn_in_room": "village_camp",
+      "turn_in_key": "quest.q_forest_sweep.turn_in",
+      "objectives": [
+        {
+          "id": "kill_spiders",
+          "type": "kill",
+          "target": "weaver_spider",
+          "required": 2,
+          "room_id": "misty_forest",
+          "desc_key": "quest.q_forest_sweep.obj_spiders"
+        },
+        {
+          "id": "kill_golem",
+          "type": "kill",
+          "target": "moss_golem",
+          "required": 1,
+          "room_id": "misty_forest",
+          "desc_key": "quest.q_forest_sweep.obj_golem"
+        }
+      ],
+      "rewards": {
+        "gold": 150,
+        "items": [
+          { "id": "forest_blade", "count": 1 },
+          { "id": "hp_potion", "count": 2 }
+        ],
+        "set_flag": "forest_cleared"
+      }
+    }
+  ]
+}

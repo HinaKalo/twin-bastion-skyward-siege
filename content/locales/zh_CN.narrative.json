@@ -1,0 +1,10 @@
+{
+  "nn.entity.ent_shen_zhao.name": "沈照",
+  "nn.entity.ent_shen_zhao.desc": "精通太极与咏春的游侠剑客。",
+  "nn.entity.ent_old_lu.name": "老陆",
+  "nn.entity.ent_old_lu.desc": "炉火营地的资深铁匠，熟悉暮雾林径的异变。",
+  "nn.entity.ent_misty_forest.name": "暮雾林径",
+  "nn.entity.ent_misty_forest.desc": "常年被青灰色雾气笼罩的古老林道，近期魔物异动频繁。",
+  "nn.nn_scene_01_omen.line_0": "今早雾气比往常更重了，连苔石魔像都在林子深处苏醒了。",
+  "nn.nn_scene_01_omen.line_1": "我这就去查明源头，顺便清出商路。"
+}

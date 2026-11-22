@@ -1,0 +1,157 @@
+{
+  "description": "FeedbackRouter recipes keyed by (phase, result, material, role). Roles: attacker / victim / ally / remote; first match wins, '*' is a wildcard. Intensities are further scaled by role and AccessibilitySettings; readable=true keeps a minimum telegraph strength.",
+  "recipes": [
+    {
+      "phase": "contact",
+      "result": "hit",
+      "material": "flesh",
+      "role": "attacker",
+      "sfx": "sfx.hit_flesh",
+      "vfx": "hit_spark",
+      "shake": 2.2,
+      "flash": 0.0,
+      "rumble": [
+        0.22,
+        0.08,
+        0.07
+      ]
+    },
+    {
+      "phase": "contact",
+      "result": "hit",
+      "material": "*",
+      "role": "victim",
+      "sfx": "sfx.hurt",
+      "vfx": "hit_spark",
+      "shake": 3.0,
+      "flash": 0.4,
+      "rumble": [
+        0.3,
+        0.65,
+        0.18
+      ]
+    },
+    {
+      "phase": "contact",
+      "result": "hit",
+      "material": "*",
+      "role": "attacker",
+      "sfx": "sfx.hit",
+      "vfx": "hit_spark",
+      "shake": 2.0,
+      "flash": 0.0,
+      "rumble": [
+        0.2,
+        0.1,
+        0.07
+      ]
+    },
+    {
+      "phase": "contact",
+      "result": "deflect",
+      "material": "*",
+      "role": "attacker",
+      "sfx": "sfx.block",
+      "vfx": "metal_spark",
+      "shake": 1.2,
+      "flash": 0.0,
+      "rumble": [
+        0.15,
+        0.25,
+        0.06
+      ]
+    },
+    {
+      "phase": "contact",
+      "result": "perfect_guard",
+      "material": "*",
+      "role": "victim",
+      "sfx": "sfx.parry",
+      "vfx": "parry_ring",
+      "shake": 4.0,
+      "flash": 0.6,
+      "rumble": [
+        0.35,
+        0.75,
+        0.16
+      ],
+      "text": "PARRY!"
+    },
+    {
+      "phase": "contact",
+      "result": "perfect_evade",
+      "material": "*",
+      "role": "victim",
+      "sfx": "sfx.evade",
+      "vfx": "afterimage",
+      "shake": 0.0,
+      "flash": 0.2,
+      "rumble": [
+        0.1,
+        0.2,
+        0.06
+      ]
+    },
+    {
+      "phase": "contact",
+      "result": "pogo",
+      "material": "*",
+      "role": "attacker",
+      "sfx": "sfx.pogo",
+      "vfx": "hit_spark",
+      "shake": 1.0,
+      "flash": 0.0,
+      "rumble": [
+        0.12,
+        0.18,
+        0.05
+      ]
+    },
+    {
+      "phase": "contact",
+      "result": "hurt",
+      "material": "thorns",
+      "role": "victim",
+      "sfx": "sfx.hurt",
+      "vfx": "blood",
+      "shake": 3.0,
+      "flash": 0.4,
+      "rumble": [
+        0.3,
+        0.6,
+        0.16
+      ]
+    },
+    {
+      "phase": "telegraph",
+      "result": "*",
+      "material": "*",
+      "role": "*",
+      "sfx": "sfx.danger",
+      "vfx": "telegraph",
+      "shake": 0.0,
+      "flash": 0.0,
+      "rumble": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "readable": true
+    },
+    {
+      "phase": "*",
+      "result": "*",
+      "material": "*",
+      "role": "ally",
+      "sfx": "",
+      "vfx": "",
+      "shake": 0.0,
+      "flash": 0.0,
+      "rumble": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
+  ]
+}

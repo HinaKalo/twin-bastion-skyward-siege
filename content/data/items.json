@@ -1,0 +1,91 @@
+{
+  "items": [
+    {
+      "id": "iron_sword",
+      "name_key": "item.iron_sword.name",
+      "type": "equipment",
+      "slot": "weapon",
+      "icon_key": "sword_iron",
+      "max_stack": 1,
+      "stats": { "atk": 10, "crit_rate": 0.05 },
+      "mastery_max_xp": 50,
+      "mastery_bonus": { "atk": 4 }
+    },
+    {
+      "id": "forest_blade",
+      "name_key": "item.forest_blade.name",
+      "type": "equipment",
+      "slot": "weapon",
+      "icon_key": "sword_iron",
+      "max_stack": 1,
+      "stats": { "atk": 18, "crit_rate": 0.12 },
+      "mastery_max_xp": 80,
+      "mastery_bonus": { "atk": 6, "crit_dmg": 0.15 }
+    },
+    {
+      "id": "iron_helmet",
+      "name_key": "item.iron_helmet.name",
+      "type": "equipment",
+      "slot": "armor",
+      "icon_key": "helmet_iron",
+      "max_stack": 1,
+      "stats": { "def": 6, "max_hp": 25 },
+      "mastery_max_xp": 60,
+      "mastery_bonus": { "max_hp": 15 }
+    },
+    {
+      "id": "leather_boots",
+      "name_key": "item.leather_boots.name",
+      "type": "equipment",
+      "slot": "accessory_1",
+      "icon_key": "boots_leather",
+      "max_stack": 1,
+      "stats": { "move_spd": 18, "def": 2 },
+      "mastery_max_xp": 40,
+      "mastery_bonus": { "move_spd": 10 }
+    },
+    {
+      "id": "magic_ring",
+      "name_key": "item.magic_ring.name",
+      "type": "equipment",
+      "slot": "accessory",
+      "icon_key": "ring_magic",
+      "max_stack": 1,
+      "stats": { "atk": 5, "max_st": 25, "crit_rate": 0.08 },
+      "mastery_max_xp": 60,
+      "mastery_bonus": { "crit_rate": 0.05 }
+    },
+    {
+      "id": "hp_potion",
+      "name_key": "item.hp_potion.name",
+      "type": "consumable",
+      "icon_key": "potion_hp",
+      "max_stack": 20,
+      "effect": { "heal_hp": 60 }
+    },
+    {
+      "id": "apple_snack",
+      "name_key": "item.apple_snack.name",
+      "type": "consumable",
+      "icon_key": "food_apple",
+      "max_stack": 20,
+      "effect": {
+        "heal_hp": 25,
+        "heal_st": 25,
+        "buff": {
+          "id": "well_fed",
+          "label": "饱腹振奋",
+          "duration": 15.0,
+          "modifiers": { "atk": 5 }
+        }
+      }
+    },
+    {
+      "id": "forest_emerald",
+      "name_key": "item.forest_emerald.name",
+      "type": "material",
+      "icon_key": "mat_emerald",
+      "max_stack": 99
+    }
+  ]
+}

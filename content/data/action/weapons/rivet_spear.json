@@ -1,0 +1,329 @@
+{
+  "id": "rivet_spear",
+  "name": "长铆枪",
+  "description": "站在刀口外直刺",
+  "source": "tideforge/scripts/forms.gd+data.gd",
+  "base": {
+    "damage": 15,
+    "reach": 101,
+    "windup": 8,
+    "active": 4,
+    "recovery": 15,
+    "force": 117
+  },
+  "cancel_delay": 2,
+  "cancel_window": 13,
+  "lunge_speed": 505,
+  "pivot_speed": 211,
+  "row_format": [
+    "windup",
+    "active",
+    "recovery",
+    "damage",
+    "reach",
+    "knockback",
+    "hitstop",
+    "guard_force",
+    "both_sides",
+    "step"
+  ],
+  "moves": {
+    "light_1": {
+      "row": [
+        8,
+        4,
+        15,
+        15.0,
+        101,
+        77.22,
+        3,
+        18,
+        0,
+        0
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "air_1": {
+      "row": [
+        8,
+        4,
+        15,
+        15.75,
+        101,
+        77.22,
+        3,
+        18,
+        0,
+        0
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "light_2": {
+      "row": [
+        9,
+        4,
+        17,
+        13.95,
+        117,
+        103.22,
+        4,
+        26,
+        0,
+        5
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "air_2": {
+      "row": [
+        9,
+        4,
+        17,
+        14.648,
+        117,
+        103.22,
+        4,
+        26,
+        1,
+        5
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "light_3": {
+      "row": [
+        11,
+        4,
+        21,
+        18.9,
+        130,
+        129.22,
+        5,
+        34,
+        0,
+        10
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "air_3": {
+      "row": [
+        11,
+        4,
+        21,
+        19.845,
+        130,
+        129.22,
+        5,
+        34,
+        0,
+        10
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "heavy": {
+      "row": [
+        13,
+        6,
+        20,
+        25.2,
+        150,
+        157,
+        6,
+        64,
+        0,
+        36
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "cleave": {
+      "row": [
+        10,
+        6,
+        15,
+        19.05,
+        164,
+        121,
+        5,
+        45,
+        0,
+        21
+      ],
+      "extra": {
+        "display": "截潮枪"
+      },
+      "hit": {
+        "narrow": true,
+        "attack_tag": "pierce"
+      }
+    },
+    "pivot_cut": {
+      "row": [
+        7,
+        5,
+        13,
+        16.2,
+        152,
+        119,
+        4,
+        33,
+        0,
+        17
+      ],
+      "extra": {
+        "display": "回马刺"
+      },
+      "root_motion": [
+        [
+          0,
+          12,
+          211,
+          0
+        ]
+      ],
+      "hit": {
+        "narrow": true,
+        "attack_tag": "pierce"
+      }
+    },
+    "reprise": {
+      "row": [
+        6,
+        6,
+        12,
+        14.4,
+        115,
+        107,
+        4,
+        22,
+        1,
+        2
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "delay_cut": {
+      "row": [
+        8,
+        7,
+        17,
+        20.55,
+        122,
+        145,
+        6,
+        46,
+        1,
+        9
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "launcher": {
+      "row": [
+        9,
+        5,
+        18,
+        18.3,
+        109,
+        65,
+        5,
+        51,
+        0,
+        7
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "lunge": {
+      "row": [
+        8,
+        6,
+        19,
+        20.7,
+        127,
+        193,
+        6,
+        48,
+        0,
+        4
+      ],
+      "root_motion": [
+        [
+          6,
+          13,
+          505,
+          0
+        ]
+      ],
+      "hit": {
+        "narrow": true,
+        "attack_tag": "pierce"
+      }
+    },
+    "dash_cut": {
+      "row": [
+        6,
+        6,
+        14,
+        16.65,
+        113,
+        133,
+        5,
+        25,
+        0,
+        3
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "counter": {
+      "row": [
+        5,
+        6,
+        13,
+        30.0,
+        127,
+        180,
+        7,
+        91,
+        0,
+        30
+      ],
+      "hit": {
+        "attack_tag": "pierce"
+      }
+    },
+    "dive": {
+      "row": [
+        4,
+        24,
+        10,
+        20.25,
+        72,
+        195,
+        7,
+        64,
+        1,
+        0
+      ],
+      "hit": {
+        "attack_tag": "dive"
+      }
+    }
+  }
+}

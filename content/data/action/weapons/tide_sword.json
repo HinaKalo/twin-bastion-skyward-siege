@@ -1,0 +1,329 @@
+{
+  "id": "tide_sword",
+  "name": "分潮剑",
+  "description": "收招快，正面破架弱",
+  "source": "tideforge/scripts/forms.gd+data.gd",
+  "base": {
+    "damage": 12,
+    "reach": 74,
+    "windup": 4,
+    "active": 4,
+    "recovery": 10,
+    "force": 105
+  },
+  "cancel_delay": 0,
+  "cancel_window": 13,
+  "lunge_speed": 474,
+  "pivot_speed": 232,
+  "row_format": [
+    "windup",
+    "active",
+    "recovery",
+    "damage",
+    "reach",
+    "knockback",
+    "hitstop",
+    "guard_force",
+    "both_sides",
+    "step"
+  ],
+  "moves": {
+    "light_1": {
+      "row": [
+        4,
+        4,
+        10,
+        12.0,
+        74,
+        69.3,
+        3,
+        13,
+        0,
+        0
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "air_1": {
+      "row": [
+        4,
+        4,
+        10,
+        12.6,
+        74,
+        69.3,
+        3,
+        13,
+        0,
+        0
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "light_2": {
+      "row": [
+        4,
+        4,
+        11,
+        11.28,
+        79,
+        95.3,
+        4,
+        21,
+        0,
+        12
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "air_2": {
+      "row": [
+        4,
+        4,
+        11,
+        11.844,
+        79,
+        95.3,
+        4,
+        21,
+        1,
+        12
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "light_3": {
+      "row": [
+        6,
+        5,
+        15,
+        15.48,
+        90,
+        121.3,
+        5,
+        29,
+        0,
+        30
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "air_3": {
+      "row": [
+        6,
+        5,
+        15,
+        16.254,
+        90,
+        121.3,
+        5,
+        29,
+        0,
+        30
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "heavy": {
+      "row": [
+        9,
+        5,
+        14,
+        19.08,
+        103,
+        126,
+        6,
+        46,
+        0,
+        39
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "cleave": {
+      "row": [
+        6,
+        6,
+        12,
+        14.28,
+        101,
+        102,
+        4,
+        33,
+        0,
+        23
+      ],
+      "extra": {
+        "display": "点灯刺"
+      },
+      "hit": {
+        "narrow": true,
+        "attack_tag": "blade"
+      }
+    },
+    "pivot_cut": {
+      "row": [
+        4,
+        5,
+        10,
+        13.32,
+        105,
+        96,
+        4,
+        29,
+        0,
+        26
+      ],
+      "extra": {
+        "display": "返星"
+      },
+      "root_motion": [
+        [
+          0,
+          9,
+          232,
+          0
+        ]
+      ],
+      "hit": {
+        "narrow": true,
+        "attack_tag": "blade"
+      }
+    },
+    "reprise": {
+      "row": [
+        4,
+        6,
+        12,
+        11.52,
+        88,
+        107,
+        4,
+        22,
+        1,
+        2
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "delay_cut": {
+      "row": [
+        6,
+        7,
+        17,
+        16.44,
+        95,
+        145,
+        6,
+        46,
+        1,
+        9
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "launcher": {
+      "row": [
+        7,
+        5,
+        18,
+        14.64,
+        82,
+        65,
+        5,
+        51,
+        0,
+        7
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "lunge": {
+      "row": [
+        6,
+        6,
+        19,
+        16.56,
+        100,
+        193,
+        6,
+        48,
+        0,
+        4
+      ],
+      "root_motion": [
+        [
+          4,
+          11,
+          474,
+          0
+        ]
+      ],
+      "hit": {
+        "narrow": true,
+        "attack_tag": "blade"
+      }
+    },
+    "dash_cut": {
+      "row": [
+        4,
+        6,
+        14,
+        13.32,
+        86,
+        133,
+        5,
+        25,
+        0,
+        3
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "counter": {
+      "row": [
+        5,
+        6,
+        13,
+        24.0,
+        100,
+        180,
+        7,
+        91,
+        0,
+        30
+      ],
+      "hit": {
+        "attack_tag": "blade"
+      }
+    },
+    "dive": {
+      "row": [
+        4,
+        24,
+        10,
+        16.2,
+        49,
+        195,
+        7,
+        64,
+        1,
+        0
+      ],
+      "hit": {
+        "attack_tag": "dive"
+      }
+    }
+  }
+}

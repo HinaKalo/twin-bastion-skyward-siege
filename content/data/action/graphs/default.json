@@ -1,0 +1,217 @@
+{
+  "id": "default",
+  "description": "MoonRPG default ARPG graph. Reproduces the original light_1/light_2 alternation (0.65s memory), heavy, pogo and ultimate. Timings converted from skills.json at 60 Hz; hit-confirm early cancel disabled to keep the original feel.",
+  "max_links": 99,
+  "hit_cancel_delay": 999,
+  "hit_cancel_window": 0,
+  "startup_cancel": 4,
+  "input_priority": [
+    "ultimate",
+    "heavy",
+    "light"
+  ],
+  "moves": {
+    "light_1": {
+      "skill": "light_1",
+      "anim": "attack_light",
+      "windup": 5,
+      "active": [
+        [
+          5,
+          13
+        ]
+      ],
+      "recovery": 7,
+      "cancel": {
+        "whiff": 13,
+        "blocked": 13,
+        "startup": 4
+      },
+      "tags": [
+        "light",
+        "attack"
+      ]
+    },
+    "light_2": {
+      "skill": "light_2",
+      "anim": "attack_light_2",
+      "windup": 6,
+      "active": [
+        [
+          6,
+          18
+        ]
+      ],
+      "recovery": 8,
+      "cancel": {
+        "whiff": 18,
+        "blocked": 18,
+        "startup": 4
+      },
+      "tags": [
+        "light",
+        "attack"
+      ]
+    },
+    "pogo_down": {
+      "skill": "pogo_down",
+      "anim": "attack_light",
+      "windup": 3,
+      "active": [
+        [
+          3,
+          10
+        ]
+      ],
+      "recovery": 7,
+      "cancel": {
+        "whiff": 10,
+        "blocked": 10,
+        "startup": 4
+      },
+      "tags": [
+        "light",
+        "attack",
+        "air",
+        "dive",
+        "pogo"
+      ]
+    },
+    "heavy_slash": {
+      "skill": "heavy_slash",
+      "anim": "attack_heavy",
+      "windup": 8,
+      "active": [
+        [
+          8,
+          18
+        ]
+      ],
+      "recovery": 10,
+      "cancel": {
+        "whiff": 18,
+        "blocked": 18,
+        "startup": 4
+      },
+      "tags": [
+        "heavy",
+        "attack"
+      ]
+    },
+    "possession_nova": {
+      "skill": "possession_nova",
+      "anim": "skill_ultimate",
+      "windup": 10,
+      "active": [
+        [
+          10,
+          26
+        ]
+      ],
+      "recovery": 10,
+      "cancel": {
+        "whiff": 26,
+        "blocked": 26,
+        "startup": 4
+      },
+      "tags": [
+        "ultimate",
+        "skill"
+      ]
+    }
+  },
+  "edges": [
+    {
+      "from": "free",
+      "input": "light",
+      "to": "pogo_down",
+      "dir": "down",
+      "priority": 5,
+      "when": {
+        "grounded": false,
+        "flags": {
+          "pogo_enabled": true
+        }
+      }
+    },
+    {
+      "from": "tag:attack",
+      "input": "light",
+      "to": "pogo_down",
+      "dir": "down",
+      "priority": 5,
+      "when": {
+        "grounded": false,
+        "flags": {
+          "pogo_enabled": true
+        }
+      }
+    },
+    {
+      "from": "free",
+      "input": "light",
+      "to": "light_2",
+      "priority": 1,
+      "when": {
+        "after": {
+          "move": "light_1",
+          "within": 39
+        }
+      }
+    },
+    {
+      "from": "free",
+      "input": "light",
+      "to": "light_1",
+      "priority": 0
+    },
+    {
+      "from": "light_1",
+      "input": "light",
+      "to": "light_2",
+      "priority": 0
+    },
+    {
+      "from": "light_2",
+      "input": "light",
+      "to": "light_1",
+      "priority": 0
+    },
+    {
+      "from": "pogo_down",
+      "input": "light",
+      "to": "light_1",
+      "priority": 0
+    },
+    {
+      "from": "heavy_slash",
+      "input": "light",
+      "to": "light_1",
+      "priority": 0
+    },
+    {
+      "from": "free",
+      "input": "heavy",
+      "to": "heavy_slash",
+      "priority": 0
+    },
+    {
+      "from": "tag:attack",
+      "input": "heavy",
+      "to": "heavy_slash",
+      "priority": 0
+    },
+    {
+      "from": "free",
+      "input": "ultimate",
+      "to": "possession_nova",
+      "priority": 0
+    },
+    {
+      "from": "tag:attack",
+      "input": "ultimate",
+      "to": "possession_nova",
+      "priority": 0
+    }
+  ]
+}

@@ -1,0 +1,92 @@
+{
+  "enemies": [
+    {
+      "id": "weaver_spider",
+      "name_key": "enemy.weaver_spider.name",
+      "actor_key": "enemy.weaver_spider",
+      "max_hp": 65,
+      "max_poise": 25,
+      "atk": 13,
+      "def": 3,
+      "move_spd": 64,
+      "aggro_range": 150,
+      "attack_range": 34,
+      "windup_time": 0.35,
+      "attack_cooldown": 1.2,
+      "xp_reward": 35,
+      "gold_reward": 20,
+      "mastery_xp": 25,
+      "drops": [
+        {
+          "item_id": "forest_emerald",
+          "count": 1,
+          "chance": 0.75
+        },
+        {
+          "item_id": "hp_potion",
+          "count": 1,
+          "chance": 0.35
+        }
+      ],
+      "tier": "fodder",
+      "moves": [
+        {
+          "id": "bite",
+          "windup": 21,
+          "active": 6,
+          "recovery": 18,
+          "reach": 36
+        }
+      ]
+    },
+    {
+      "id": "moss_golem",
+      "name_key": "enemy.moss_golem.name",
+      "actor_key": "enemy.moss_golem",
+      "max_hp": 140,
+      "max_poise": 75,
+      "atk": 20,
+      "def": 7,
+      "move_spd": 46,
+      "aggro_range": 175,
+      "attack_range": 42,
+      "windup_time": 0.48,
+      "attack_cooldown": 1.6,
+      "xp_reward": 80,
+      "gold_reward": 55,
+      "mastery_xp": 45,
+      "drops": [
+        {
+          "item_id": "magic_ring",
+          "count": 1,
+          "chance": 1.0
+        },
+        {
+          "item_id": "forest_emerald",
+          "count": 2,
+          "chance": 1.0
+        }
+      ],
+      "tier": "rival",
+      "moves": [
+        {
+          "id": "slam",
+          "windup": 29,
+          "active": 8,
+          "recovery": 30,
+          "reach": 42
+        },
+        {
+          "id": "shoulder",
+          "windup": 18,
+          "active": 6,
+          "recovery": 24,
+          "reach": 30
+        }
+      ],
+      "openings": [
+        "slam_recovery"
+      ]
+    }
+  ]
+}

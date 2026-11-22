@@ -1,0 +1,18 @@
+{
+  "description": "Interaction matrix: attack tag x surface tag -> result (hit | deflect | parry | clash | pogo | pass | ignore | hurt). First match wins; '*' is a wildcard.",
+  "rules": [
+    { "attack": "dive", "surface": "thorns", "result": "pogo" },
+    { "attack": "dive", "surface": "head", "result": "pogo" },
+    { "attack": "body", "surface": "thorns", "result": "hurt" },
+    { "attack": "*", "surface": "thorns", "result": "ignore" },
+    { "attack": "blade", "surface": "shield_front", "result": "deflect" },
+    { "attack": "pierce", "surface": "shield_front", "result": "deflect" },
+    { "attack": "blunt", "surface": "shield_front", "result": "clash" },
+    { "attack": "blunt", "surface": "staff_guard", "result": "clash" },
+    { "attack": "projectile", "surface": "parry_surface", "result": "parry" },
+    { "attack": "dash", "surface": "low_barrier", "result": "pass" },
+    { "attack": "*", "surface": "low_barrier", "result": "ignore" },
+    { "attack": "*", "surface": "body", "result": "hit" },
+    { "attack": "*", "surface": "head", "result": "hit" }
+  ]
+}

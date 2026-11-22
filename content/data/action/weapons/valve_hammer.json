@@ -1,0 +1,326 @@
+{
+  "id": "valve_hammer",
+  "name": "阀锤",
+  "description": "破架专精",
+  "source": "tideforge/scripts/forms.gd+data.gd",
+  "base": {
+    "damage": 18,
+    "reach": 63,
+    "windup": 10,
+    "active": 6,
+    "recovery": 18,
+    "force": 184
+  },
+  "cancel_delay": 4,
+  "cancel_window": 13,
+  "lunge_speed": 315,
+  "pivot_speed": 101,
+  "row_format": [
+    "windup",
+    "active",
+    "recovery",
+    "damage",
+    "reach",
+    "knockback",
+    "hitstop",
+    "guard_force",
+    "both_sides",
+    "step"
+  ],
+  "moves": {
+    "light_1": {
+      "row": [
+        10,
+        6,
+        18,
+        18.0,
+        63,
+        121.44,
+        3,
+        18,
+        0,
+        0
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "air_1": {
+      "row": [
+        10,
+        6,
+        18,
+        18.9,
+        63,
+        121.44,
+        3,
+        18,
+        0,
+        0
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "light_2": {
+      "row": [
+        11,
+        6,
+        19,
+        14.76,
+        73,
+        147.44,
+        4,
+        26,
+        0,
+        20
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "air_2": {
+      "row": [
+        11,
+        6,
+        19,
+        15.498,
+        73,
+        147.44,
+        4,
+        26,
+        1,
+        20
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "light_3": {
+      "row": [
+        14,
+        7,
+        24,
+        23.04,
+        79,
+        173.44,
+        5,
+        34,
+        0,
+        26
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "air_3": {
+      "row": [
+        14,
+        7,
+        24,
+        24.192,
+        79,
+        173.44,
+        5,
+        34,
+        0,
+        26
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "heavy": {
+      "row": [
+        19,
+        8,
+        23,
+        34.92,
+        88,
+        219,
+        8,
+        101,
+        1,
+        16
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "cleave": {
+      "row": [
+        15,
+        9,
+        23,
+        30.24,
+        108,
+        236,
+        8,
+        99,
+        1,
+        7
+      ],
+      "extra": {
+        "display": "落闸锤"
+      },
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "pivot_cut": {
+      "row": [
+        10,
+        8,
+        20,
+        25.56,
+        83,
+        210,
+        7,
+        76,
+        1,
+        5
+      ],
+      "extra": {
+        "display": "转肩砸"
+      },
+      "root_motion": [
+        [
+          0,
+          18,
+          101,
+          0
+        ]
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "reprise": {
+      "row": [
+        9,
+        6,
+        12,
+        17.28,
+        77,
+        107,
+        4,
+        22,
+        1,
+        2
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "delay_cut": {
+      "row": [
+        11,
+        7,
+        17,
+        24.66,
+        84,
+        145,
+        6,
+        46,
+        1,
+        9
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "launcher": {
+      "row": [
+        12,
+        5,
+        18,
+        21.96,
+        71,
+        65,
+        5,
+        51,
+        0,
+        7
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "lunge": {
+      "row": [
+        11,
+        6,
+        19,
+        24.84,
+        89,
+        193,
+        6,
+        48,
+        0,
+        4
+      ],
+      "root_motion": [
+        [
+          9,
+          16,
+          315,
+          0
+        ]
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "dash_cut": {
+      "row": [
+        9,
+        6,
+        14,
+        19.98,
+        75,
+        133,
+        5,
+        25,
+        0,
+        3
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "counter": {
+      "row": [
+        5,
+        6,
+        13,
+        36.0,
+        89,
+        180,
+        7,
+        91,
+        0,
+        30
+      ],
+      "hit": {
+        "attack_tag": "blunt"
+      }
+    },
+    "dive": {
+      "row": [
+        4,
+        24,
+        10,
+        24.3,
+        61,
+        195,
+        7,
+        64,
+        1,
+        0
+      ],
+      "hit": {
+        "attack_tag": "dive"
+      }
+    }
+  }
+}

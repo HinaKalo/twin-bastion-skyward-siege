@@ -1,0 +1,42 @@
+{
+  "story_title": "暮雾林径外传",
+  "characters": [
+    {
+      "id": "ent_shen_zhao",
+      "name_key": "nn.entity.ent_shen_zhao.name",
+      "desc_key": "nn.entity.ent_shen_zhao.desc",
+      "portrait_key": "player.shen_zhao",
+      "aliases": [
+        "照哥"
+      ],
+      "attributes": {
+        "weapon": "直剑",
+        "school": "太极×咏春"
+      }
+    },
+    {
+      "id": "ent_old_lu",
+      "name_key": "nn.entity.ent_old_lu.name",
+      "desc_key": "nn.entity.ent_old_lu.desc",
+      "portrait_key": "npc.camp_smith",
+      "aliases": [
+        "营地铁匠"
+      ],
+      "attributes": {
+        "role": "铁匠"
+      }
+    }
+  ],
+  "locations": [
+    {
+      "id": "ent_misty_forest",
+      "name_key": "nn.entity.ent_misty_forest.name",
+      "desc_key": "nn.entity.ent_misty_forest.desc",
+      "portrait_key": "",
+      "aliases": [],
+      "attributes": {}
+    }
+  ],
+  "items": [],
+  "factions": []
+}
