@@ -118,9 +118,10 @@ func simulate(stage: Dictionary, diff: String, mode: String, rng_seed: int, endl
 		"wave": d.wave_dir.current_wave_index + 1, "waves": d.wave_dir.get_total_waves(),
 		"stars": MetaProgress.compute_stars(d.engine.lives, d.max_lives, diff, d.leaks) if d.is_victory() else 0,
 		"gold": [int(d.gold[1]), int(d.gold[2])],
+		"lost": int(d.stats[1]["towers_lost"]) + int(d.stats[2]["towers_lost"]),
 	}
 
 
 func _print_row(sid: String, diff: String, mode: String, r: Dictionary) -> void:
 	var res := ("WIN %d★" % int(r["stars"])) if bool(r["won"]) else ("LOSE w%d/%d" % [int(r["wave"]), int(r["waves"])])
-	print("%-22s %-7s %-6s %-9s %2d/%-3d %-6d %4d/%-6d %5.0fs" % [sid, diff, mode, res, int(r["lives"]), int(r["max_lives"]), int(r["leaks"]), int(r["k1"]), int(r["k2"]), float(r["time"])])
+	print("%-22s %-7s %-6s %-9s %2d/%-3d %-6d %4d/%-6d %5.0fs  lost %d" % [sid, diff, mode, res, int(r["lives"]), int(r["max_lives"]), int(r["leaks"]), int(r["k1"]), int(r["k2"]), float(r["time"]), int(r.get("lost", 0))])

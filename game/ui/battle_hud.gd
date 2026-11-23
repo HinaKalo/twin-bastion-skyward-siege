@@ -6,9 +6,11 @@ extends CanvasLayer
 ## Buttons are hit-tested manually and reported through `action(id)`.
 
 signal action(id: String)
+signal minimap_clicked(world_pos: Vector2)
 
 const TOP_H := 22.0
 const DOCK_Y := 248.0
+const MM_RECT := Rect2(368, 24, 108, 61)
 
 var director: CoopTDDirector = null
 var ai_seat: int = 0 # seat driven by AI (0 = none)
@@ -24,11 +26,17 @@ var local_seats: Array[int] = [1, 2]
 var banner_text: String = ""
 var banner_color: Color = Color(1.0, 0.94, 0.30)
 var banner_alpha: float = 0.0
+var minimap_visible: bool = true
+var world_size: Vector2 = Vector2(480, 270)
+var road_polys: Array = []
+var view_rect: Rect2 = Rect2()
+var alerts: Array = [] # [{pos, ttl}]
 
 var _t: float = 0.0
 var _top: _Strip
 var _dock: _Strip
 var _banner: _Strip
+var _mm: _Strip
 var _buttons: Array[Dictionary] = []
 var _hover: String = ""
 
@@ -67,6 +75,13 @@ func _ready() -> void:
 	_banner.size = Vector2(480, 16)
 	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_banner)
+	_mm = _Strip.new()
+	_mm.hud = self
+	_mm.strip_id = "minimap"
+	_mm.position = MM_RECT.position
+	_mm.size = MM_RECT.size
+	_mm.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_mm)
 
 
 func refresh(delta: float) -> void:
@@ -74,15 +89,26 @@ func refresh(delta: float) -> void:
 	_top.queue_redraw()
 	_dock.queue_redraw()
 	_banner.queue_redraw()
+	_mm.visible = minimap_visible and world_size.x > 480.0
+	if _mm.visible:
+		_mm.queue_redraw()
 
 
 func is_point_on_hud(p: Vector2) -> bool:
-	return p.y < TOP_H or p.y >= DOCK_Y
+	return p.y < TOP_H or p.y >= DOCK_Y or (_mm != null and _mm.visible and MM_RECT.has_point(p))
 
 
 # ------------------------------------------------------------------ input
 
 func _strip_input(strip: Control, sid: String, event: InputEvent) -> void:
+	if sid == "minimap":
+		var held := event is InputEventMouseMotion and ((event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
+		var press := event is InputEventMouseButton and (event as InputEventMouseButton).pressed and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT
+		if held or press:
+			var lp: Vector2 = (event as InputEventMouse).position
+			minimap_clicked.emit(lp / MM_RECT.size * world_size)
+			strip.accept_event()
+		return
 	if event is InputEventMouseMotion:
 		_hover = _button_at(sid, (event as InputEventMouseMotion).position)
 	elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
@@ -110,12 +136,56 @@ func _draw_strip(c: Control, sid: String) -> void:
 		return
 	if sid == "banner":
 		_draw_banner(c)
+	elif sid == "minimap":
+		_draw_minimap(c)
 	elif sid == "top":
 		_buttons = _buttons.filter(func(b): return str(b["strip"]) != "top")
 		_draw_top(c)
 	else:
 		_buttons = _buttons.filter(func(b): return str(b["strip"]) != "dock")
 		_draw_dock(c)
+
+
+func _draw_minimap(c: Control) -> void:
+	var sz := MM_RECT.size
+	var k := sz / world_size
+	c.draw_rect(Rect2(Vector2.ZERO, sz), Color(0.03, 0.04, 0.08, 0.86))
+	for poly in road_polys:
+		var pts := PackedVector2Array()
+		for q in poly:
+			pts.append((q as Vector2) * k)
+		c.draw_polyline(pts, Color(0.62, 0.52, 0.36, 0.9), 1.0)
+	var gate: Vector2 = TerrainBaker.gate_pos(director.stage_def) * k
+	c.draw_rect(Rect2(gate - Vector2(2, 3), Vector2(4, 6)), UIKit.GOLD)
+	for pad in director.pads:
+		if bool(pad.get("ruin", false)) and not director.pad_to_tower_uid.has(str(pad["id"])):
+			c.draw_rect(Rect2((pad["pos"] as Vector2) * k - Vector2(1, 1), Vector2(2, 2)), Color(0.45, 0.45, 0.48))
+	for uid in director.engine.towers.keys():
+		var t: Dictionary = director.engine.towers[uid]
+		var col := UIKit.pcol(int(director.tower_owners.get(uid, 1)))
+		var tp := (t["pos"] as Vector2) * k
+		c.draw_rect(Rect2(tp - Vector2(1.5, 1.5), Vector2(3, 3)), col if float(t.get("hp", 1.0)) > float(t.get("max_hp", 1.0)) * 0.35 else UIKit.BAD)
+	for cr in director.engine.creeps:
+		var cp := (cr["pos"] as Vector2) * k
+		if bool(cr.get("is_boss", false)):
+			var blink := 1.0 if fmod(_t, 0.5) < 0.3 else 0.4
+			c.draw_rect(Rect2(cp - Vector2(2, 2), Vector2(4, 4)), Color(1.0, 0.25, 0.25, blink))
+		else:
+			c.draw_rect(Rect2(cp, Vector2(1, 1)), Color(1.0, 0.35, 0.30))
+	for pid in [1, 2]:
+		var h: Dictionary = director.heroes.get(pid, {})
+		if not h.is_empty() and float(h["hp"]) > 0.0:
+			var hp := (h["pos"] as Vector2) * k
+			c.draw_rect(Rect2(hp - Vector2(1.5, 1.5), Vector2(3, 3)), Color.WHITE)
+			c.draw_rect(Rect2(hp - Vector2(1, 1), Vector2(2, 2)), UIKit.pcol(pid))
+	for al in alerts:
+		var ap := (al["pos"] as Vector2) * k
+		var r := 3.0 + fmod(_t * 8.0, 4.0)
+		c.draw_arc(ap, r, 0.0, TAU, 10, Color(1.0, 0.3, 0.25, clampf(float(al["ttl"]), 0.0, 1.0)), 1.0)
+	if view_rect.size.x > 0.0:
+		c.draw_rect(Rect2(view_rect.position * k, view_rect.size * k), Color(1, 1, 1, 0.85), false, 1.0)
+	c.draw_rect(Rect2(Vector2.ZERO, sz), UIKit.GOLD_DIM, false, 1.0)
+	UIKit.draw_text(c, Vector2(sz.x - 3, sz.y - 2), "M", 5, UIKit.TEXT_DIM, HORIZONTAL_ALIGNMENT_RIGHT)
 
 
 func _draw_banner(c: Control) -> void:

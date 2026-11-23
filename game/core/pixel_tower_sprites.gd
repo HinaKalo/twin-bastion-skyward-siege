@@ -176,6 +176,16 @@ static func _paint_branch(img: Image, branch: String, accent: Color) -> void:
 				_px(img, 18 - k, 18 + k, Color(0.62, 0.42, 0.20))
 
 
+static func get_ruin_texture() -> Texture2D:
+	if _cache.has("ruin"):
+		return _cache["ruin"]
+	var rows := ["......SS.....s......", "....SSssS...SSs.....", "..SSSssSSMMsSSss....", ".SsSSSSssSSSSsSSSs..", "SSSssSSSSSSssSSSSSs.", "ssssssssssssssssss.."]
+	var img := PixelCreepSprites._rasterize(rows, 20, {"S": Color(0.55, 0.55, 0.60), "s": Color(0.36, 0.36, 0.42), "M": Color(0.40, 0.26, 0.12)}, Color(0.08, 0.08, 0.10))
+	var tex := ImageTexture.create_from_image(img)
+	_cache["ruin"] = tex
+	return tex
+
+
 static func get_pad_texture(owner_hint: int) -> ImageTexture:
 	var key := "pad_%d" % owner_hint
 	if _cache.has(key):

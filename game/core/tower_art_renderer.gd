@@ -38,6 +38,8 @@ static func draw_tower_detailed(canvas: CanvasItem, t: Dictionary, owner: int, n
 
 	var recoil := 1.0 if fire > 0.1 else 0.0
 	var mod := Color(0.70, 0.88, 1.25) if frozen else Color.WHITE
+	if float(t.get("hit_flash", 0.0)) > 0.0:
+		mod = Color(2.4, 2.0, 2.0)
 	var tex := PixelTowerSprites.get_tower_texture(tid, owner, level, branch)
 	canvas.draw_texture_rect(tex, Rect2(p - Vector2(16, 29 - recoil), Vector2(32, 40)), false, mod)
 
@@ -66,3 +68,10 @@ static func draw_tower_detailed(canvas: CanvasItem, t: Dictionary, owner: int, n
 
 	if frozen:
 		PixelIcons.draw_icon(canvas, "snow", p + Vector2(10, -24))
+
+	var mx := float(t.get("max_hp", 0.0))
+	if mx > 0.0 and float(t.get("hp", mx)) < mx - 0.5:
+		var pct := clampf(float(t["hp"]) / mx, 0.0, 1.0)
+		var br := Rect2(p.x - 11, p.y - 33, 22, 2)
+		canvas.draw_rect(br.grow(1), INK_C)
+		canvas.draw_rect(Rect2(br.position, Vector2(br.size.x * pct, 2)), UIKit.GOOD.lerp(UIKit.BAD, 1.0 - pct))

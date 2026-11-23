@@ -61,6 +61,52 @@ func _new_dir(stage_id: String = "stage_2_rift_cross", meta: MetaProgress = null
 	return d
 
 
+func _adjacent_pads(d: CoopTDDirector) -> Array[String]:
+	for a in d.pads:
+		for b in d.pads:
+			if a != b and (a["pos"] as Vector2).distance_to(b["pos"]) <= CoopTDDirector.COMBO_RADIUS - 4.0:
+				return [str(a["id"]), str(b["id"])]
+	return []
+
+
+func _ground_lane(d: CoopTDDirector) -> String:
+	for k in d.engine.lanes.keys():
+		if not str(k).ends_with("#air"):
+			return str(k)
+	return ""
+
+
+## [lane_id, progress] of the ground route point closest to `pos`.
+func _progress_near(d: CoopTDDirector, pos: Vector2) -> Array:
+	var best := [_ground_lane(d), 0.0]
+	var best_d := INF
+	for k in d.engine.lanes.keys():
+		if str(k).ends_with("#air"):
+			continue
+		var lane: TDPathLane = d.engine.lanes[k]
+		for i in range(101):
+			var pr := float(i) / 100.0
+			var dd := pos.distance_to(lane.get_point_at_progress(pr))
+			if dd < best_d:
+				best_d = dd
+				best = [str(k), pr]
+	return best
+
+
+func _park_creep(d: CoopTDDirector, eid: String, pos: Vector2, hp: float = -1.0) -> Dictionary:
+	var lp := _progress_near(d, pos)
+	var c := d.engine.spawn_creep(eid, lp[0])
+	d._init_creep(c, 0)
+	c["progress"] = lp[1]
+	c["pos"] = (d.engine.lanes[lp[0]] as TDPathLane).get_point_at_progress(lp[1])
+	c["speed"] = 0.0
+	c["base_speed"] = 0.0
+	if hp > 0.0:
+		c["hp"] = hp
+		c["max_hp"] = hp
+	return c
+
+
 func _tick(d: CoopTDDirector, seconds: float, dt: float = 0.05) -> void:
 	var t := 0.0
 	while t < seconds:
@@ -81,6 +127,8 @@ func _run_all() -> void:
 	_test_kill_attribution()
 	_test_enemy_abilities()
 	_test_hero_skills()
+	_test_enemy_ai()
+	_test_monster_attacks()
 	_test_wave_flow()
 	_test_difficulty_and_endless()
 	_test_ai()
@@ -115,7 +163,9 @@ func _test_campaign() -> void:
 	for s in stages:
 		for w in s["waves"]:
 			for g in w["groups"]:
-				_assert_true(CreepCatalog.ROSTER.has(str(g["enemy_id"])), "%s uses a known enemy (%s)" % [s["id"], g["enemy_id"]])
+				_assert_true(CreepCatalog.ROSTER.has(str(g["enemy_id"])) or str(g["enemy_id"]) == "adaptive", "%s uses a known enemy (%s)" % [s["id"], g["enemy_id"]])
+				var sp := str(g["lane_id"])
+				_assert_true(sp == "random" or (s["graph"]["spawns"] as Dictionary).has(sp), "%s wave spawn %s exists" % [s["id"], sp])
 
 
 func _lane_dist(p: Vector2, pts: Array) -> float:
@@ -130,36 +180,59 @@ func _lane_dist(p: Vector2, pts: Array) -> float:
 func _check_layout(s: Dictionary) -> void:
 	var sid := str(s["id"])
 	var bad: Array[String] = []
+	var graph: Dictionary = s["graph"]
+	var polys := MapGraph.all_edge_polylines(graph)
+	var world: Vector2 = s["world"]
+	var gate: Vector2 = graph["nodes"][graph["gate"]]
 	var pads: Array = s["pads"]
+	if pads.size() < 18:
+		bad.append("only %d pads" % pads.size())
 	for pad in pads:
 		var pp: Vector2 = pad["pos"]
-		var rp: Vector2 = pad["rally"]
-		var min_lane := INF
-		var rally_lane := INF
-		for l in s["lanes"]:
-			min_lane = minf(min_lane, _lane_dist(pp, l["points"]))
-			rally_lane = minf(rally_lane, _lane_dist(rp, l["points"]))
-		if min_lane < 20.0:
-			bad.append("%s overlaps a road (%.0fpx)" % [pad["id"], min_lane])
-		if min_lane > 70.0:
-			bad.append("%s is too far from any road (%.0fpx)" % [pad["id"], min_lane])
-		if rally_lane > 8.0:
-			bad.append("%s rally is off-road (%.0fpx)" % [pad["id"], rally_lane])
-		if rp.distance_to(pp) > 60.0:
+		var rd := MapGraph.dist_to_polylines(pp, polys)
+		if rd < 24.0:
+			bad.append("%s overlaps a road (%.0fpx)" % [pad["id"], rd])
+		if MapGraph.dist_to_polylines(pad["rally"], polys) > 2.0:
+			bad.append("%s rally is off-road" % pad["id"])
+		if (pad["rally"] as Vector2).distance_to(pp) > 60.0:
 			bad.append("%s rally too far from pad" % pad["id"])
-		if pp.x < 16 or pp.x > 404 or pp.y < 36 or pp.y > 240:
+		if pp.x < 16 or pp.x > gate.x - 60.0 or pp.y < 36 or pp.y > world.y - 30.0:
 			bad.append("%s outside playfield" % pad["id"])
 		for other in pads:
-			if other != pad and pp.distance_to(other["pos"]) < 32.0:
+			if other != pad and pp.distance_to(other["pos"]) < 40.0:
 				bad.append("%s too close to %s" % [pad["id"], other["id"]])
+	var hints := {0: 0, 1: 0, 2: 0}
+	for pad in pads:
+		hints[int(pad["owner_hint"])] += 1
+	if hints[1] < 5 or hints[2] < 5:
+		bad.append("unbalanced owner hints %s" % str(hints))
+	var built := MapGraph.build_routes(graph)
+	var routes: Array = built["routes"]
+	var spawns: Dictionary = graph["spawns"]
+	if spawns.size() < 3:
+		bad.append("fewer than 3 spawns")
+	if routes.size() < 6:
+		bad.append("only %d ground routes" % routes.size())
+	var road_len := 0.0
+	for poly in polys:
+		road_len += TerrainBaker._poly_len(poly)
+	if road_len < 2700.0:
+		bad.append("road network too short (%.0f)" % road_len)
+	for sp in spawns.keys():
+		var n := 0
+		for r in routes:
+			if str(r["spawn"]) == str(sp):
+				n += 1
+				if (r["points"] as PackedVector2Array)[(r["points"] as PackedVector2Array).size() - 1].distance_to(gate) > 1.0:
+					bad.append("route %s does not end at the gate" % r["id"])
+		if n == 0:
+			bad.append("spawn %s has no route" % sp)
+		if not (built["air"] as Dictionary).has(sp):
+			bad.append("spawn %s has no flight path" % sp)
 	for h in s.get("hero_spawns", []):
-		var hd := INF
-		for l in s["lanes"]:
-			hd = minf(hd, _lane_dist(h, l["points"]))
-		if hd > 30.0:
+		if MapGraph.dist_to_polylines(h, polys) > 30.0:
 			bad.append("hero spawn %s far from road" % str(h))
 	_assert_true(bad.is_empty(), "%s layout is valid %s" % [sid, str(bad)])
-
 
 func _test_meta() -> void:
 	var meta := _new_meta()
@@ -193,14 +266,18 @@ func _test_wallets_and_combos() -> void:
 	_assert_eq(int(d.gold[2]), g2 + 65, "P2 receives 50G + 15G gold_gift bonus")
 	d.gold[1] = 1000
 	d.gold[2] = 1000
-	var b1 := d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": "p3", "tower_id": "frost"})
-	var b2 := d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": "p2", "tower_id": "mage"})
+	var adj := _adjacent_pads(d)
+	var b1 := d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": adj[0], "tower_id": "frost"})
+	var b2 := d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": adj[1], "tower_id": "mage"})
 	_assert_true(bool(b1["ok"]) and bool(b2["ok"]), "P1 and P2 build adjacent towers")
 	_assert_true(d.combo_links.size() >= 1, "Adjacent P1xP2 towers form a combo link")
 	_assert_eq(str(d.combo_links[0]["kind"]), "ice_fire_overload", "Frost + Mage = Ice-Fire Overload")
-	_assert_true(not bool(d.build_or_upgrade_pad(1, "p2", "arrow")["ok"]), "P1 cannot upgrade P2's tower")
-	_assert_true(not bool(d.sell_pad(1, "p2")["ok"]), "P1 cannot sell P2's tower")
-	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": "p4", "tower_id": "frost"})
+	_assert_true(not bool(d.build_or_upgrade_pad(1, adj[1], "arrow")["ok"]), "P1 cannot upgrade P2's tower")
+	_assert_true(not bool(d.sell_pad(1, adj[1])["ok"]), "P1 cannot sell P2's tower")
+	for pad in d.pads:
+		if not d.pad_to_tower_uid.has(str(pad["id"])) and (pad["pos"] as Vector2).distance_to(d._find_pad(adj[0])["pos"]) < 90.0:
+			d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": str(pad["id"]), "tower_id": "frost"})
+			break
 	var same_owner_links := 0
 	for l in d.combo_links:
 		if int(d.tower_owners[l["t1_uid"]]) == int(d.tower_owners[l["t2_uid"]]):
@@ -212,7 +289,7 @@ func _test_wallets_and_combos() -> void:
 	_assert_eq(d._combo_kind_for("mage", "barracks"), "twin_star_haste", "Other pairs = Twin Star Haste")
 
 	d.synchro_charge = 100.0
-	d.engine.spawn_creep("goblin", "north")
+	d.engine.spawn_creep("goblin", _ground_lane(d))
 	_assert_eq(str(d.trigger_synchro_ult(1)["state"]), "pending", "P1 starts Synchro and waits for P2")
 	_assert_true(not bool(d.trigger_synchro_ult(1)["ok"]), "Initiator cannot confirm their own Synchro")
 	_assert_eq(str(d.trigger_synchro_ult(2)["state"]), "unleashed", "P2 confirmation unleashes Twin Star Meteor")
@@ -256,16 +333,12 @@ func _test_upgrades_and_branches() -> void:
 
 func _test_frost_and_overload() -> void:
 	var d := _new_dir()
-	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": "p3", "tower_id": "frost"})
-	d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": "p2", "tower_id": "mage"})
+	var adj := _adjacent_pads(d)
+	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": adj[0], "tower_id": "frost"})
+	d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": adj[1], "tower_id": "mage"})
+	var mid: Vector2 = ((d._find_pad(adj[0])["pos"] as Vector2) + (d._find_pad(adj[1])["pos"] as Vector2)) * 0.5
 	for i in range(4):
-		var c := d.engine.spawn_creep("shield_bearer", "north")
-		c["progress"] = 0.42
-		c["pos"] = (d.engine.lanes["north"] as TDPathLane).get_point_at_progress(0.42)
-		c["hp"] = 5000.0
-		c["max_hp"] = 5000.0
-		c["speed"] = 0.0
-		c["base_speed"] = 0.0
+		_park_creep(d, "shield_bearer", mid, 5000.0)
 	_tick(d, 3.0)
 	var slowed := 0
 	for c in d.engine.creeps:
@@ -274,39 +347,33 @@ func _test_frost_and_overload() -> void:
 	_assert_true(slowed > 0, "Frost tower actually slows enemies")
 	_assert_true(int(d.stats[1]["combo_procs"]) > 0, "Ice-Fire Overload procs on slowed targets")
 
-
 func _test_fire_rate_survives_recompute() -> void:
 	var d := _new_dir()
-	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": "p3", "tower_id": "arrow"})
-	d.execute_command({"player_id": 1, "action": "upgrade", "pad_id": "p3"})
-	var t := d.get_tower_at_pad("p3")
+	var adj := _adjacent_pads(d)
+	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": adj[0], "tower_id": "arrow"})
+	d.execute_command({"player_id": 1, "action": "upgrade", "pad_id": adj[0]})
+	var t := d.get_tower_at_pad(adj[0])
 	var upgraded_rate := float(t["fire_rate"])
 	_assert_true(upgraded_rate > 1.4, "Lv2 arrow fire rate includes upgrade bonus")
-	d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": "p2", "tower_id": "arrow"})
+	d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": adj[1], "tower_id": "arrow"})
 	_assert_true(absf(float(t["fire_rate"]) - upgraded_rate * 1.15) < 0.01, "Twin Star haste multiplies the upgraded rate")
-	d.execute_command({"player_id": 2, "action": "sell", "pad_id": "p2"})
+	d.execute_command({"player_id": 2, "action": "sell", "pad_id": adj[1]})
 	_assert_true(absf(float(t["fire_rate"]) - upgraded_rate) < 0.01, "Fire rate returns to upgraded base after combo ends")
-
 
 func _test_kill_attribution() -> void:
 	var d := _new_dir()
-	d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": "p6", "tower_id": "arrow"})
-	var c := d.engine.spawn_creep("slime", "south")
-	c["hp"] = 1.0
-	c["progress"] = 0.85
-	c["pos"] = (d.engine.lanes["south"] as TDPathLane).get_point_at_progress(0.85)
-	c["speed"] = 0.0
-	# Keep heroes away so the tower lands the hit
+	var pad: Dictionary = d.pads[d.pads.size() / 2]
+	d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": str(pad["id"]), "tower_id": "arrow"})
+	_park_creep(d, "slime", pad["rally"], 1.0)
 	d.heroes[1]["pos"] = Vector2(-500, -500)
 	d.heroes[2]["pos"] = Vector2(-500, -500)
 	_tick(d, 1.5)
 	_assert_eq(int(d.stats[2]["kills"]), 1, "Kill is credited to the owner of the tower that landed it")
 	_assert_eq(int(d.stats[1]["kills"]), 0, "Partner gets no credit for that kill")
 
-
 func _test_enemy_abilities() -> void:
 	var d := _new_dir()
-	var sp := d.engine.spawn_creep("splitter", "north")
+	var sp := d.engine.spawn_creep("splitter", _ground_lane(d))
 	d._init_creep(sp, 0)
 	sp["progress"] = 0.3
 	sp["hp"] = 0.0
@@ -317,22 +384,22 @@ func _test_enemy_abilities() -> void:
 			slimelets += 1
 	_assert_eq(slimelets, 2, "Splitter splits into 2 slimelets on death")
 
-	var sh := d.engine.spawn_creep("shield_bearer", "north")
+	var sh := d.engine.spawn_creep("shield_bearer", _ground_lane(d))
 	var before := float(sh["hp"])
 	d.engine.apply_damage_to_creep(sh, 40.0, "physical")
 	_assert_true(before - float(sh["hp"]) <= 7.0, "Shield cuts physical damage hard")
 	d.engine.apply_damage_to_creep(sh, 200.0, "magic")
 	_assert_true(float(sh["shield"]) <= 0.0, "Magic breaks the shield")
 
-	var shaman := d.engine.spawn_creep("shaman", "south")
+	var shaman := d.engine.spawn_creep("shaman", _ground_lane(d))
 	d._init_creep(shaman, 0)
-	var hurt := d.engine.spawn_creep("goblin", "south")
+	var hurt := d.engine.spawn_creep("goblin", _ground_lane(d))
 	hurt["hp"] = 10.0
 	shaman["ab_timer"] = 0.0
 	d._tick_creep_abilities(0.05)
 	_assert_true(float(hurt["hp"]) > 10.0, "Shaman heals nearby allies")
 
-	var boss := d.engine.spawn_creep("boss_obsidian", "north")
+	var boss := d.engine.spawn_creep("boss_obsidian", _ground_lane(d))
 	d._init_creep(boss, 4)
 	boss["hp"] = float(boss["max_hp"]) * 0.45
 	var n_before := d.engine.creeps.size()
@@ -340,27 +407,154 @@ func _test_enemy_abilities() -> void:
 	_assert_true(float(boss["shield"]) > 0.0 and d.engine.creeps.size() > n_before, "Obsidian boss summons minions and raises a shield at half HP")
 
 	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": "p6", "tower_id": "arrow"})
-	var colossus := d.engine.spawn_creep("boss_frost_colossus", "north")
+	var colossus := d.engine.spawn_creep("boss_frost_colossus", _ground_lane(d))
 	d._init_creep(colossus, 4)
 	colossus["pos"] = d.get_tower_at_pad("p6")["pos"]
 	colossus["ab_timer"] = 0.0
+	var hp_before := float(d.get_tower_at_pad("p6")["hp"])
 	d._tick_creep_abilities(0.05)
 	_assert_true(float(d.get_tower_at_pad("p6")["frozen_timer"]) > 0.0, "Frost Colossus roar freezes nearby towers")
+	_assert_true(float(d.get_tower_at_pad("p6")["hp"]) < hp_before, "Frost Colossus roar damages nearby towers")
 
 
 func _test_hero_skills() -> void:
 	var d := _new_dir()
-	var targets := []
+	var lane: TDPathLane = d.engine.lanes[_ground_lane(d)]
+	var spot := lane.get_point_at_progress(0.5)
 	for i in range(3):
-		var c := d.engine.spawn_creep("slime", "north")
-		c["pos"] = Vector2(120, 80)
-		targets.append(c)
-	var r1 := d.execute_command({"player_id": 1, "action": "hero_skill", "x": 120.0, "y": 80.0})
+		var c := d.engine.spawn_creep("slime", _ground_lane(d))
+		c["pos"] = spot
+	var r1 := d.execute_command({"player_id": 1, "action": "hero_skill", "x": spot.x, "y": spot.y})
 	_assert_true(bool(r1["ok"]) and int(r1["hits"]) == 3, "P1 meteor volley hits clustered enemies")
-	_assert_true(not bool(d.execute_command({"player_id": 1, "action": "hero_skill", "x": 120.0, "y": 80.0})["ok"]), "Hero skill respects cooldown")
-	_assert_true(not bool(d.execute_command({"player_id": 2, "action": "hero_skill", "x": 240.0, "y": 30.0})["ok"]), "Reinforcements must be placed near a road")
+	_assert_true(not bool(d.execute_command({"player_id": 1, "action": "hero_skill", "x": spot.x, "y": spot.y})["ok"]), "Hero skill respects cooldown")
+	_assert_true(not bool(d.execute_command({"player_id": 2, "action": "hero_skill", "x": 6.0, "y": 6.0})["ok"]), "Reinforcements must be placed near a road")
 	var n_before := d.engine.soldiers.size()
-	_assert_true(bool(d.execute_command({"player_id": 2, "action": "hero_skill", "x": 92.0, "y": 194.0})["ok"]) and d.engine.soldiers.size() == n_before + 2, "P2 reinforcements drop two blockers on the road")
+	_assert_true(bool(d.execute_command({"player_id": 2, "action": "hero_skill", "x": spot.x, "y": spot.y + 4.0})["ok"]) and d.engine.soldiers.size() == n_before + 2, "P2 reinforcements drop two blockers on the road")
+
+func _test_enemy_ai() -> void:
+	# Cunning enemies avoid the route the players fortified
+	var d := _new_dir("stage_1_twin_bridge")
+	var sp := "west"
+	var cands: Array = d.spawn_routes[sp]
+	_assert_true(cands.size() >= 3, "A spawn offers several routes")
+	var target_r: Dictionary = d.routes[int(cands[0])]
+	var pts: PackedVector2Array = target_r["points"]
+	for pad in d.pads:
+		if MapGraph.dist_to_polylines(pad["pos"], [pts]) < 45.0 and not d.pad_to_tower_uid.has(str(pad["id"])):
+			d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": str(pad["id"]), "tower_id": "mage"})
+	d._danger_dirty = true
+	d._refresh_danger()
+	var danger: Array = []
+	for ri in cands:
+		danger.append(d._route_danger_from(int(ri), 0.0))
+	var safest := int(cands[danger.find(danger.min())])
+	var deadliest := int(cands[danger.find(danger.max())])
+	var picks := {}
+	var smart := CreepCatalog.get_def("assassin")
+	for i in range(200):
+		var ri := d._choose_route(sp, smart, 0.0, cands)
+		picks[ri] = int(picks.get(ri, 0)) + 1
+	_assert_true(int(picks.get(safest, 0)) > int(picks.get(deadliest, 0)), "Cunning enemies prefer the least-defended route")
+	var troll := CreepCatalog.get_def("troll_breaker")
+	var tpicks := {}
+	for i in range(200):
+		var ri2 := d._choose_route(sp, troll, 0.0, cands)
+		tpicks[ri2] = int(tpicks.get(ri2, 0)) + 1
+	_assert_true(int(tpicks.get(deadliest, 0)) > int(picks.get(deadliest, 0)), "Siege trolls seek out defended routes")
+	var all_routes := {}
+	for i in range(60):
+		all_routes[d._choose_route(sp, CreepCatalog.get_def("goblin"), 0.0, cands)] = true
+	_assert_true(all_routes.size() >= 2, "Route choice stays unpredictable")
+
+	# Rerouting at forks
+	var d2 := _new_dir("stage_1_twin_bridge")
+	var switched := 0
+	for i in range(40):
+		d2._on_spawn_requested("wolf", "west_n", 0)
+	var start := {}
+	for c in d2.engine.creeps:
+		start[str(c["uid"])] = int(c["route_idx"])
+	_tick(d2, 12.0)
+	for c in d2.engine.creeps:
+		if start.has(str(c["uid"])) and int(c["route_idx"]) != int(start[str(c["uid"])]):
+			switched += 1
+	_assert_true(switched > 0, "Enemies switch routes at forks")
+
+	# Random spawns and flyers
+	var d3 := _new_dir("stage_1_twin_bridge")
+	var seen := {}
+	for i in range(30):
+		d3._on_spawn_requested("slime", "random", 0)
+	for c in d3.engine.creeps:
+		seen[str(c["spawn"])] = true
+	_assert_true(seen.size() >= 2, "Random groups enter from different spawns")
+	d3._on_spawn_requested("bat", "west", 0)
+	_assert_true(str(d3.engine.creeps[d3.engine.creeps.size() - 1]["lane_id"]).ends_with("#air"), "Flyers take the flight path")
+
+	# Counter-picks against an all-physical defense
+	var d4 := _new_dir("stage_1_twin_bridge")
+	for i in range(6):
+		d4.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": str(d4.pads[i]["id"]), "tower_id": "arrow"})
+	var counters := 0
+	for i in range(40):
+		if d4._counter_pick(1) in ["shield_bearer", "gargoyle"]:
+			counters += 1
+	_assert_true(counters > 20, "Adaptive groups counter an arrow-heavy defense")
+
+
+func _test_monster_attacks() -> void:
+	var d := _new_dir("stage_1_twin_bridge")
+	var pad: Dictionary = d.pads[3]
+	var pid := str(pad["id"])
+	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": pid, "tower_id": "arrow"})
+	var t := d.get_tower_at_pad(pid)
+	t["damage"] = 0.0
+	var full := float(t["hp"])
+	_assert_true(full > 0.0 and full == float(t["max_hp"]), "Towers have HP")
+	var archer := _park_creep(d, "goblin_archer", pad["rally"])
+	archer["atk_timer"] = 0.0
+	d._tick_creep_attacks(0.05)
+	_assert_true(float(t["hp"]) < full, "Goblin archers shoot towers")
+	d.engine.creeps.clear()
+	var troll := _park_creep(d, "troll_breaker", pad["rally"])
+	troll["speed"] = 16.0
+	troll["base_speed"] = 16.0
+	troll["siege_timer"] = 0.0
+	var hp_mid := float(t["hp"])
+	d._tick_creep_attacks(0.05)
+	_assert_true(bool(troll.get("sieging", false)) and float(troll["speed"]) == 0.0, "Trolls stop to siege nearby towers")
+	_assert_true(float(t["hp"]) < hp_mid, "Troll smashes the tower")
+	d.engine.creeps.clear()
+	# repair
+	var rc := d.get_repair_cost(pid)
+	_assert_true(rc > 0, "Damaged tower can be repaired")
+	var g := int(d.gold[1])
+	_assert_true(bool(d.execute_command({"player_id": 1, "action": "repair", "pad_id": pid})["ok"]) and float(t["hp"]) == float(t["max_hp"]) and int(d.gold[1]) == g - rc, "Repair restores HP for gold")
+	_assert_true(not bool(d.execute_command({"player_id": 2, "action": "repair", "pad_id": pid})["ok"]), "Partner cannot repair your tower")
+	# bomb bat dive
+	var bat := d.engine.spawn_creep("bomb_bat", d.air_routes.values()[0])
+	d._init_creep(bat, 0)
+	bat["pos"] = (t["pos"] as Vector2) + Vector2(30, -30)
+	var hp_b := float(t["hp"])
+	for i in range(40):
+		d._tick_creep_attacks(0.05)
+	_assert_true(float(t["hp"]) < hp_b, "Bomb bats dive into towers and explode")
+	_assert_true(d.engine.creeps.is_empty(), "Bomb bat dies in its own explosion")
+	_assert_eq(int(d.stats[1]["kills"]), 0, "Self-destructing bats give no kill credit")
+	# destruction -> ruin -> cheaper rebuild
+	var destroyed := [false]
+	d.tower_destroyed.connect(func(_o: int, _p: String, _t: Dictionary): destroyed[0] = true)
+	d._damage_tower(t, 99999.0)
+	_assert_true(destroyed[0] and not d.pad_to_tower_uid.has(pid) and bool(d._find_pad(pid)["ruin"]), "Towers can be destroyed and leave a ruin")
+	_assert_eq(d.get_build_cost(pid, "arrow"), int(round(float(d.get_tower_cost("arrow")) * 0.7)), "Rebuilding on a ruin costs 30% less")
+	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": pid, "tower_id": "mage"})
+	_assert_true(not bool(d._find_pad(pid)["ruin"]), "Rebuilding clears the ruin")
+	# regen
+	var t2 := d.get_tower_at_pad(pid)
+	t2["hp"] = float(t2["max_hp"]) * 0.5
+	t2["last_hit_t"] = d.elapsed - 10.0
+	d._tick_tower_regen(1.0)
+	_assert_true(float(t2["hp"]) > float(t2["max_hp"]) * 0.5, "Towers slowly repair out of combat")
 
 
 func _test_wave_flow() -> void:

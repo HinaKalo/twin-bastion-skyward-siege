@@ -22,6 +22,7 @@ var anim: float = 0.0
 var confirm_sell: bool = false
 var read_only: bool = false
 var title: String = ""
+var view_rect: Rect2 = Rect2(0, 22, 480, 226)
 
 
 func build(director: CoopTDDirector, idx: int, player_id: int) -> void:
@@ -30,7 +31,7 @@ func build(director: CoopTDDirector, idx: int, player_id: int) -> void:
 	var pad: Dictionary = director.pads[idx]
 	pad_id = str(pad["id"])
 	anchor = pad["pos"]
-	center = Vector2(clampf(anchor.x, 40.0, 440.0), clampf(anchor.y, 60.0, 210.0))
+	center = Vector2(clampf(anchor.x, view_rect.position.x + 40.0, view_rect.end.x - 40.0), clampf(anchor.y, view_rect.position.y + 38.0, view_rect.end.y - 40.0))
 	options.clear()
 	hover = -1
 	anim = 0.0
@@ -39,12 +40,13 @@ func build(director: CoopTDDirector, idx: int, player_id: int) -> void:
 	var gold := int(director.gold.get(pid, 0))
 	var t := director.get_tower_at_pad(pad_id)
 	if t.is_empty():
-		title = "建造防御塔"
+		var ruin := bool(pad.get("ruin", false))
+		title = "在废墟上重建（-30%）" if ruin else "建造防御塔"
 		var angles := [-135.0, -45.0, 135.0, 45.0]
 		for i in range(TowerCatalog.TOWER_IDS.size()):
 			var tid: String = TowerCatalog.TOWER_IDS[i]
 			var def: Dictionary = director.engine.tower_defs[tid]
-			var cost := int(def["cost"])
+			var cost := director.get_build_cost(pad_id, tid)
 			options.append({
 				"kind": "build", "tower_id": tid, "angle": angles[i], "label": str(def["name"]), "cost": cost,
 				"enabled": gold >= cost, "desc": str(def.get("desc", "")), "range": float(def.get("range", 0.0)),
@@ -88,6 +90,13 @@ func build(director: CoopTDDirector, idx: int, player_id: int) -> void:
 		options.append({
 			"kind": "rally", "icon": "flag", "angle": 180.0, "label": "集结点", "cost": 0, "enabled": true,
 			"desc": "点击附近道路，重新部署卫兵", "range": 70.0, "cmd": {}, "stats": [],
+		})
+	var rcost := director.get_repair_cost(pad_id)
+	if rcost > 0:
+		options.append({
+			"kind": "repair", "icon": "heal", "angle": 0.0, "label": "修理", "cost": rcost, "enabled": gold >= rcost,
+			"desc": "耐久 %d/%d，修满" % [int(t["hp"]), int(t["max_hp"])], "range": 0.0,
+			"cmd": {"action": "repair", "pad_id": pad_id}, "stats": [],
 		})
 	var refund := director.get_sell_refund(pad_id)
 	options.append({
@@ -223,9 +232,9 @@ func _draw_tooltip(canvas: CanvasItem, o: Dictionary) -> void:
 	var w := 112.0
 	var h := 14.0 + (9.0 if desc != "" else 0.0) + 8.0 * lines.size() + 2.0
 	var x := center.x + RADIUS + OPT_R + 6.0
-	if x + w > 476.0:
+	if x + w > view_rect.end.x - 4.0:
 		x = center.x - RADIUS - OPT_R - 6.0 - w
-	var y := clampf(center.y - h * 0.5, 26.0, 244.0 - h)
+	var y := clampf(center.y - h * 0.5, view_rect.position.y + 2.0, view_rect.end.y - h - 2.0)
 	var r := Rect2(x, y, w, h)
 	UIKit.draw_panel(canvas, r, UIKit.pcol(pid))
 	UIKit.draw_text(canvas, r.position + Vector2(5, 10), label, 7, UIKit.GOLD)

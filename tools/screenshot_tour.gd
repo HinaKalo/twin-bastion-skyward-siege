@@ -92,6 +92,15 @@ func _battle_states(n: int, sid: String) -> void:
 		if lv >= 2:
 			d.execute_command({"player_id": pid, "action": "upgrade", "pad_id": str(pad["id"]), "branch": i % 2})
 	await create_timer(0.3).timeout
+	scene._user_zoom = 0.6
+	scene._zoom = 0.6
+	scene.focus_camera(scene.world_size * 0.5)
+	await create_timer(0.3).timeout
+	await _shot("s%d_02a_overview" % n)
+	scene._user_zoom = 1.0
+	scene._zoom = 1.0
+	scene.focus_camera(scene.world_size * 0.5)
+	await create_timer(0.3).timeout
 	await _shot("s%d_02_towers" % n)
 	if n == 1:
 		# branch menu on a Lv2 tower owned by P1
@@ -116,7 +125,13 @@ func _battle_states(n: int, sid: String) -> void:
 	d.call_next_wave()
 	d.call_next_wave()
 	d.call_next_wave()
-	await create_timer(5.5).timeout
+	await create_timer(9.0).timeout
+	if not d.engine.creeps.is_empty():
+		var cen := Vector2.ZERO
+		for c in d.engine.creeps:
+			cen += c["pos"]
+		scene.focus_camera(cen / float(d.engine.creeps.size()))
+	await create_timer(0.4).timeout
 	await _shot("s%d_03_combat" % n)
 
 	var boss_id := ""
@@ -125,10 +140,14 @@ func _battle_states(n: int, sid: String) -> void:
 			if CreepCatalog.is_boss(str(g["enemy_id"])):
 				boss_id = str(g["enemy_id"])
 	if boss_id != "":
-		d.wave_dir.enemy_spawn_requested.emit(boss_id, str(d.engine.lanes.keys()[0]), 4)
+		d.wave_dir.enemy_spawn_requested.emit(boss_id, str(d.spawn_ids[0]), 4)
 		await create_timer(0.5).timeout
 		await _shot("s%d_04_boss_cutin" % n)
-		await create_timer(3.0).timeout
+		await create_timer(3.4).timeout
+		for c in d.engine.creeps:
+			if bool(c.get("is_boss", false)):
+				scene.focus_camera(c["pos"])
+		await create_timer(0.3).timeout
 		await _shot("s%d_05_boss_field" % n)
 
 	d.synchro_charge = 100.0

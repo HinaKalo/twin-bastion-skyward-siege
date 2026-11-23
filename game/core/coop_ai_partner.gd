@@ -65,13 +65,25 @@ func tick(delta: float, director: CoopTDDirector) -> void:
 		director.execute_command({"player_id": player_id, "action": "transfer_gold", "amount": 50})
 		return
 
+	# Repair badly damaged towers first
+	for pad in director.pads:
+		var rp := str(pad["id"])
+		if director.get_pad_owner(rp) != player_id:
+			continue
+		var tw := director.get_tower_at_pad(rp)
+		if float(tw.get("hp", 1.0)) < float(tw.get("max_hp", 1.0)) * 0.55:
+			var rc := director.get_repair_cost(rp)
+			if rc > 0 and mine >= rc:
+				director.execute_command({"player_id": player_id, "action": "repair", "pad_id": rp})
+				return
+
 	# Build on the best empty pad we are allowed to use
 	for pad in _ordered_pads(director):
 		var pid := str(pad["id"])
 		if director.pad_to_tower_uid.has(pid):
 			continue
 		var chosen := _choose_tower(pad["pos"] as Vector2, director)
-		if mine >= director.get_tower_cost(chosen):
+		if mine >= director.get_build_cost(pid, chosen):
 			director.execute_command({"player_id": player_id, "action": "build_or_upgrade", "pad_id": pid, "tower_id": chosen})
 		return # wait (save up) for the best pad instead of skipping it
 
@@ -129,6 +141,8 @@ func _coverage(pad: Dictionary, director: CoopTDDirector) -> int:
 	var n := 0
 	for lane in director.engine.lanes.values():
 		var l := lane as TDPathLane
+		if l.lane_id.ends_with("#air"):
+			continue
 		var steps := maxi(10, int(l.total_length / 8.0))
 		for s in range(steps + 1):
 			if pp.distance_to(l.get_point_at_progress(float(s) / float(steps))) <= 105.0:

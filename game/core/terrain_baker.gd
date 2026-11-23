@@ -1,13 +1,11 @@
 class_name TerrainBaker
 extends RefCounted
-## Bakes each stage's battlefield ground into a single 480x270 pixel-art texture (cached per stage):
+## Bakes each stage's battlefield ground (any world size) into one pixel-art texture, cached per stage:
 ## dithered biome ground, distance-field roads (rounded joints, edges, per-biome paving), river / chasm / ice /
 ## lava cracks, a twin-bastion castle at the lane exit, and seeded decorations that avoid roads and pads.
 ## Animated layers (water glints, rift glow, braziers, snowfall, embers, flowing lane chevrons, castle banners)
 ## are drawn on top every frame by draw_ground() / draw_foreground().
 
-const W := 480
-const H := 270
 
 static var _cache: Dictionary = {} # stage_id -> {tex, braziers, glow_pts, river, chasm}
 
@@ -72,64 +70,95 @@ const DECOR: Dictionary = {
 }
 
 
+static func world_size(stage_def: Dictionary) -> Vector2i:
+	var w: Vector2 = stage_def.get("world", Vector2(480, 270))
+	return Vector2i(int(w.x), int(w.y))
+
+
+static func road_polylines(stage_def: Dictionary) -> Array:
+	if stage_def.has("graph"):
+		return MapGraph.all_edge_polylines(stage_def["graph"])
+	var out: Array = []
+	for ldef in stage_def.get("lanes", []):
+		out.append(PackedVector2Array(ldef["points"]))
+	return out
+
+
+static func gate_pos(stage_def: Dictionary) -> Vector2:
+	if stage_def.has("graph"):
+		return stage_def["graph"]["nodes"][stage_def["graph"]["gate"]]
+	return Vector2(435, 136)
+
+
 static func draw_ground(canvas: CanvasItem, stage_def: Dictionary, biome: String, t: float) -> void:
 	var c := _stage_cache(stage_def, biome)
 	canvas.draw_texture(c["tex"], Vector2.ZERO)
+	var ws := world_size(stage_def)
 	match biome:
 		"bridge":
 			var river: PackedVector2Array = c["river"]
-			for i in range(18):
-				var f := fmod(float(i) / 18.0 + t * 0.035, 1.0)
-				var idx := int(f * float(river.size() - 1))
-				var p := river[idx] + Vector2(sin(float(i) * 2.3) * 6.0, 0)
-				var a := 0.35 + 0.35 * sin(t * 3.0 + float(i))
-				canvas.draw_line(p, p + Vector2(4, 0), Color(0.85, 0.97, 1.0, a), 1.0)
+			if river.size() > 1:
+				for i in range(40):
+					var f := fmod(float(i) / 40.0 + t * 0.02, 1.0)
+					var idx := int(f * float(river.size() - 1))
+					var p := river[idx] + Vector2(sin(float(i) * 2.3) * 7.0, 0)
+					var a := 0.35 + 0.35 * sin(t * 3.0 + float(i))
+					canvas.draw_line(p, p + Vector2(4, 0), Color(0.85, 0.97, 1.0, a), 1.0)
 		"rift":
 			var chasm: PackedVector2Array = c["chasm"]
-			var pulse := 0.6 + 0.4 * sin(t * 3.0)
-			canvas.draw_polyline(chasm, Color(0.80, 0.35, 1.0, 0.35 * pulse), 5.0)
-			canvas.draw_polyline(chasm, Color(1.0, 0.65, 1.0, 0.75 * pulse), 1.0)
-			for i in range(8):
-				var f := fmod(float(i) * 0.137 + t * 0.06, 1.0)
-				var p := chasm[int(f * float(chasm.size() - 1))]
-				var rise := fmod(t * 12.0 + float(i) * 7.0, 16.0)
-				canvas.draw_rect(Rect2(p + Vector2(sin(t + i) * 3.0, -rise), Vector2(1, 1)), Color(1.0, 0.7, 1.0, 1.0 - rise / 16.0))
+			if chasm.size() > 1:
+				var pulse := 0.6 + 0.4 * sin(t * 3.0)
+				canvas.draw_polyline(chasm, Color(0.80, 0.35, 1.0, 0.35 * pulse), 5.0)
+				canvas.draw_polyline(chasm, Color(1.0, 0.65, 1.0, 0.75 * pulse), 1.0)
+				for i in range(16):
+					var f := fmod(float(i) * 0.137 + t * 0.06, 1.0)
+					var p := _point_at(chasm, f * _poly_len(chasm))
+					var rise := fmod(t * 12.0 + float(i) * 7.0, 16.0)
+					canvas.draw_rect(Rect2(p + Vector2(sin(t + i) * 3.0, -rise), Vector2(1, 1)), Color(1.0, 0.7, 1.0, 1.0 - rise / 16.0))
 		"abyss":
 			var pts: Array = c["glow_pts"]
 			for i in range(pts.size()):
 				var a := 0.25 + 0.35 * maxf(0.0, sin(t * 2.0 + float(i) * 0.7))
 				canvas.draw_rect(Rect2(pts[i], Vector2(1, 1)), Color(1.0, 0.45, 0.95, a))
 		"snow":
-			for i in range(10):
-				var p := Vector2(fmod(float(i) * 97.0, 420.0) + 10.0, fmod(float(i) * 53.0, 200.0) + 30.0)
+			for i in range(36):
+				var p := Vector2(fmod(float(i) * 197.0, float(ws.x) - 80.0) + 10.0, fmod(float(i) * 113.0, float(ws.y) - 40.0) + 20.0)
 				var a := maxf(0.0, sin(t * 2.0 + float(i) * 1.7))
 				canvas.draw_rect(Rect2(p, Vector2(1, 1)), Color(1, 1, 1, a))
-	# braziers (siege) / torches
 	for bp in c["braziers"]:
 		var fl := sin(t * 14.0 + bp.x) * 1.2
 		canvas.draw_circle(bp + Vector2(0, -2), 14.0, Color(1.0, 0.55, 0.18, 0.10 + 0.04 * sin(t * 9.0 + bp.y)))
 		canvas.draw_colored_polygon(PackedVector2Array([bp + Vector2(-3, -1), bp + Vector2(3, -1), bp + Vector2(0, -8 + fl)]), Color(1.0, 0.48, 0.12))
 		canvas.draw_colored_polygon(PackedVector2Array([bp + Vector2(-1.5, -1), bp + Vector2(1.5, -1), bp + Vector2(0, -5 + fl * 0.5)]), Color(1.0, 0.94, 0.40))
-	# flowing lane chevrons
-	for ldef in stage_def.get("lanes", []):
-		var pts := PackedVector2Array(ldef["points"])
-		var total := 0.0
-		for i in range(pts.size() - 1):
-			total += pts[i].distance_to(pts[i + 1])
+	# spawn portals that open inside the map (not on the edge)
+	if stage_def.has("graph"):
+		var g: Dictionary = stage_def["graph"]
+		for sp in (g["spawns"] as Dictionary).keys():
+			var p: Vector2 = g["nodes"][g["spawns"][sp]]
+			if p.x > 40.0 and p.y > 30.0 and p.y < float(ws.y) - 30.0:
+				for k in range(3):
+					var r := 6.0 + float(k) * 4.0 + sin(t * 3.0 + float(k)) * 1.5
+					canvas.draw_arc(p, r, t * (1.5 + k) , t * (1.5 + k) + TAU * 0.7, 18, Color(0.85, 0.40, 1.0, 0.7 - float(k) * 0.18), 1.5)
+				canvas.draw_circle(p, 4.0, Color(0.10, 0.02, 0.16))
+	# flowing chevrons toward the gate
+	for pts in c["roads"]:
+		var poly: PackedVector2Array = pts
+		var total := _poly_len(poly)
 		var d := fmod(t * 14.0, 40.0)
-		while d < total - 30.0:
-			var pr := _point_at(pts, d)
-			var pr2 := _point_at(pts, d + 3.0)
+		while d < total - 12.0:
+			var pr := _point_at(poly, d)
+			var pr2 := _point_at(poly, d + 3.0)
 			var dir := (pr2 - pr).normalized()
 			var perp := Vector2(-dir.y, dir.x)
-			canvas.draw_polyline(PackedVector2Array([pr - dir * 2.0 + perp * 3.0, pr + dir * 2.0, pr - dir * 2.0 - perp * 3.0]), Color(1, 1, 1, 0.13), 1.0)
+			canvas.draw_polyline(PackedVector2Array([pr - dir * 2.0 + perp * 3.0, pr + dir * 2.0, pr - dir * 2.0 - perp * 3.0]), Color(1, 1, 1, 0.12), 1.0)
 			d += 40.0
 
 
 static func draw_foreground(canvas: CanvasItem, stage_def: Dictionary, biome: String, t: float) -> void:
 	var _c := _stage_cache(stage_def, biome)
-	# castle banners: P1 on the north tower, P2 on the south tower
-	for spec in [[Vector2(457, 44), UIKit.P1], [Vector2(457, 156), UIKit.P2]]:
+	var ws := world_size(stage_def)
+	var gate := gate_pos(stage_def)
+	for spec in [[gate + Vector2(22, -92), UIKit.P1], [gate + Vector2(22, 20), UIKit.P2]]:
 		var base: Vector2 = spec[0]
 		var col: Color = spec[1]
 		canvas.draw_line(base, base + Vector2(0, -12), Color(0.85, 0.72, 0.36), 1.0)
@@ -141,23 +170,25 @@ static func draw_foreground(canvas: CanvasItem, stage_def: Dictionary, biome: St
 			var x := float(k) * 2.0
 			pts.append(base + Vector2(1 + x, -7 + sin(t * 6.0 - x * 0.6) * 1.2))
 		canvas.draw_colored_polygon(pts, col)
+	var area_k := float(ws.x * ws.y) / (480.0 * 270.0)
 	match biome:
 		"snow":
-			for i in range(40):
-				var x := fmod(float(i) * 61.7 + t * (8.0 + float(i % 5) * 2.0) + sin(t + float(i)) * 6.0, 480.0)
-				var y := 22.0 + fmod(float(i) * 37.3 + t * (14.0 + float(i % 4) * 4.0), 226.0)
+			for i in range(int(40 * area_k)):
+				var x := fmod(float(i) * 61.7 + t * (8.0 + float(i % 5) * 2.0) + sin(t + float(i)) * 6.0, float(ws.x))
+				var y := fmod(float(i) * 37.3 + t * (14.0 + float(i % 4) * 4.0), float(ws.y))
 				canvas.draw_rect(Rect2(x, y, 1, 1), Color(1, 1, 1, 0.75))
 		"abyss":
-			for i in range(18):
-				var x := fmod(float(i) * 83.1 + sin(t * 0.7 + float(i)) * 10.0, 480.0)
-				var y := 248.0 - fmod(float(i) * 29.0 + t * (10.0 + float(i % 3) * 5.0), 226.0)
+			for i in range(int(18 * area_k)):
+				var x := fmod(float(i) * 83.1 + sin(t * 0.7 + float(i)) * 10.0, float(ws.x))
+				var y := float(ws.y) - fmod(float(i) * 29.0 + t * (10.0 + float(i % 3) * 5.0), float(ws.y))
 				canvas.draw_rect(Rect2(x, y, 1, 1), Color(1.0, 0.5, 0.9, 0.7))
-	# soft vignette on the playfield edges
-	for k in range(5):
-		var a := 0.06 * float(5 - k)
-		canvas.draw_rect(Rect2(0, 22 + k, 480, 1), Color(0, 0, 0, a))
-		canvas.draw_rect(Rect2(0, 247 - k, 480, 1), Color(0, 0, 0, a))
-		canvas.draw_rect(Rect2(k, 22, 1, 226), Color(0, 0, 0, a))
+
+
+static func _poly_len(pts: PackedVector2Array) -> float:
+	var total := 0.0
+	for i in range(pts.size() - 1):
+		total += pts[i].distance_to(pts[i + 1])
+	return total
 
 
 static func _point_at(pts: PackedVector2Array, dist: float) -> Vector2:
@@ -171,7 +202,7 @@ static func _point_at(pts: PackedVector2Array, dist: float) -> Vector2:
 
 
 static func _stage_cache(stage_def: Dictionary, biome: String) -> Dictionary:
-	var key := "%s|%s" % [str(stage_def.get("id", "?")), biome]
+	var key := "%s|%s|%s" % [str(stage_def.get("id", "?")), biome, str(stage_def.get("world", ""))]
 	if not _cache.has(key):
 		_cache[key] = _bake(stage_def, biome)
 	return _cache[key]
@@ -179,14 +210,14 @@ static func _stage_cache(stage_def: Dictionary, biome: String) -> Dictionary:
 
 # ------------------------------------------------------------------ baking
 
-static func _seg_field(field: PackedFloat32Array, pts: PackedVector2Array, reach: float) -> void:
+static func _seg_field(field: PackedFloat32Array, pts: PackedVector2Array, reach: float, w: int, h: int) -> void:
 	for i in range(pts.size() - 1):
 		var a := pts[i]
 		var b := pts[i + 1]
 		var x0 := maxi(0, int(floor(minf(a.x, b.x) - reach)))
-		var x1 := mini(W - 1, int(ceil(maxf(a.x, b.x) + reach)))
+		var x1 := mini(w - 1, int(ceil(maxf(a.x, b.x) + reach)))
 		var y0 := maxi(0, int(floor(minf(a.y, b.y) - reach)))
-		var y1 := mini(H - 1, int(ceil(maxf(a.y, b.y) + reach)))
+		var y1 := mini(h - 1, int(ceil(maxf(a.y, b.y) + reach)))
 		var ab := b - a
 		var len2 := maxf(0.0001, ab.length_squared())
 		for y in range(y0, y1 + 1):
@@ -194,19 +225,22 @@ static func _seg_field(field: PackedFloat32Array, pts: PackedVector2Array, reach
 				var p := Vector2(x + 0.5, y + 0.5)
 				var tt := clampf((p - a).dot(ab) / len2, 0.0, 1.0)
 				var d := p.distance_to(a + ab * tt)
-				var idx := y * W + x
+				var idx := y * w + x
 				if d < field[idx]:
 					field[idx] = d
 
 
 static func _hash01(x: int, y: int, s: int) -> float:
-	var h := (x * 374761393 + y * 668265263 + s * 1442695041) & 0x7fffffff
-	h = ((h ^ (h >> 13)) * 1274126177) & 0x7fffffff
-	return float(h & 0xffff) / 65535.0
+	var hh := (x * 374761393 + y * 668265263 + s * 1442695041) & 0x7fffffff
+	hh = ((hh ^ (hh >> 13)) * 1274126177) & 0x7fffffff
+	return float(hh & 0xffff) / 65535.0
 
 
 static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 	var b: Dictionary = BIOMES.get(biome, BIOMES["bridge"])
+	var ws := world_size(stage_def)
+	var w := ws.x
+	var h := ws.y
 	var sid := str(stage_def.get("id", "stage"))
 	var seed_v := absi(hash(sid))
 	var noise := FastNoiseLite.new()
@@ -221,28 +255,33 @@ static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 	crack.frequency = 0.02
 	crack.fractal_type = FastNoiseLite.FRACTAL_RIDGED
 
+	var roads := road_polylines(stage_def)
 	var road := PackedFloat32Array()
-	road.resize(W * H)
+	road.resize(w * h)
 	road.fill(99.0)
-	for ldef in stage_def.get("lanes", []):
-		_seg_field(road, PackedVector2Array(ldef["points"]), 16.0)
+	for poly in roads:
+		_seg_field(road, poly, 16.0, w, h)
 
+	var features: Dictionary = stage_def.get("features", {})
 	var river_pts := PackedVector2Array()
 	var water := PackedFloat32Array()
 	if biome == "bridge":
-		for ry in range(0, 18):
-			var y := 18.0 + float(ry) * 14.0
-			river_pts.append(Vector2(184.0 + sin(float(ry) * 0.45) * 6.5, y))
-		water.resize(W * H)
-		water.fill(99.0)
-		_seg_field(water, river_pts, 24.0)
+		if features.has("river"):
+			river_pts = PackedVector2Array(features["river"])
+		elif not stage_def.has("graph"):
+			for ry in range(0, 18):
+				river_pts.append(Vector2(184.0 + sin(float(ry) * 0.45) * 6.5, 18.0 + float(ry) * 14.0))
+		if river_pts.size() > 1:
+			water.resize(w * h)
+			water.fill(99.0)
+			_seg_field(water, river_pts, 24.0, w, h)
 	var chasm_pts := PackedVector2Array()
 	var chasm := PackedFloat32Array()
 	if biome == "rift":
-		chasm_pts = PackedVector2Array([Vector2(205, 18), Vector2(228, 88), Vector2(250, 136), Vector2(224, 186), Vector2(252, 252)])
-		chasm.resize(W * H)
+		chasm_pts = PackedVector2Array(features.get("chasm", [Vector2(205, 18), Vector2(228, 88), Vector2(250, 136), Vector2(224, 186), Vector2(252, 252)]))
+		chasm.resize(w * h)
 		chasm.fill(99.0)
-		_seg_field(chasm, chasm_pts, 12.0)
+		_seg_field(chasm, chasm_pts, 12.0, w, h)
 
 	var ground: Array = b["ground"]
 	var rcols: Array = b["road"]
@@ -250,19 +289,20 @@ static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 	var speck: Color = b["speck"]
 	var paving := str(b["paving"])
 	var data := PackedByteArray()
-	data.resize(W * H * 4)
+	data.resize(w * h * 4)
 	var glow_pts: Array = []
+	var has_water := water.size() > 0
+	var has_chasm := chasm.size() > 0
 
-	for y in range(H):
-		for x in range(W):
-			var i := y * W + x
+	for y in range(h):
+		for x in range(w):
+			var i := y * w + x
 			var n := noise.get_noise_2d(x, y) * 0.5 + 0.5
 			var dn := detail.get_noise_2d(x, y)
 			var bay := float(BAYER[(y % 4) * 4 + (x % 4)]) / 16.0
 			var tone := clampi(int(n * 4.0 + dn * 0.6 + (bay - 0.5) * 0.9), 0, 3)
 			var col: Color = ground[tone]
 			var hsh := _hash01(x, y, seed_v)
-			# biome ground flavor
 			if biome == "siege":
 				var bx := (x + ((y / 10) % 2) * 9) % 18
 				if y % 10 == 0 or bx == 0:
@@ -278,12 +318,11 @@ static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 				var cr := crack.get_noise_2d(x, y)
 				if cr > 0.86:
 					col = Color(0.55, 0.18, 0.70) if cr > 0.93 else Color(0.30, 0.10, 0.40)
-					if cr > 0.93 and hsh < 0.08:
+					if cr > 0.93 and hsh < 0.06:
 						glow_pts.append(Vector2(x, y))
 			elif biome == "rift" and hsh < 0.01:
 				col = speck
-			# water
-			if biome == "bridge":
+			if has_water:
 				var wd := water[i]
 				if wd < 19.5:
 					if wd < 9.0:
@@ -294,13 +333,12 @@ static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 						col = Color(0.29, 0.60, 0.76)
 					else:
 						col = Color(0.62, 0.55, 0.38) if tone % 2 == 0 else Color(0.56, 0.49, 0.33)
-			if biome == "rift":
+			if has_chasm:
 				var cd := chasm[i]
 				if cd < 7.0:
 					col = Color(0.04, 0.02, 0.07) if cd < 5.0 else Color(0.14, 0.05, 0.20)
 				elif cd < 9.0:
 					col = Color(0.30, 0.12, 0.42)
-			# roads
 			var rd := road[i]
 			if rd < 12.5:
 				if rd >= 10.8:
@@ -308,7 +346,7 @@ static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 				elif rd >= 8.8:
 					col = edge
 				else:
-					var over_water := biome == "bridge" and water[i] < 19.5
+					var over_water := has_water and water[i] < 19.5
 					if over_water:
 						col = Color(0.56, 0.37, 0.19) if x % 4 != 0 else Color(0.34, 0.21, 0.10)
 						if rd > 7.5:
@@ -321,15 +359,16 @@ static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 			data[o + 2] = int(clampf(col.b, 0.0, 1.0) * 255.0)
 			data[o + 3] = 255
 
-	var img := Image.create_from_data(W, H, false, Image.FORMAT_RGBA8, data)
+	var img := Image.create_from_data(w, h, false, Image.FORMAT_RGBA8, data)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_v
 	var braziers: Array = []
-	_place_decor(img, stage_def, biome, road, water, chasm, rng, braziers)
-	_paint_castle(img, b["castle"], biome)
-	if glow_pts.size() > 160:
-		glow_pts = glow_pts.slice(0, 160)
-	return {"tex": ImageTexture.create_from_image(img), "braziers": braziers, "glow_pts": glow_pts, "river": river_pts, "chasm": chasm_pts}
+	var gate := gate_pos(stage_def)
+	_place_decor(img, stage_def, biome, road, water, chasm, rng, braziers, w, h, gate)
+	_paint_castle(img, b["castle"], biome, Vector2i(int(gate.x), int(gate.y)), w, h)
+	if glow_pts.size() > 400:
+		glow_pts = glow_pts.slice(0, 400)
+	return {"tex": ImageTexture.create_from_image(img), "braziers": braziers, "glow_pts": glow_pts, "river": river_pts, "chasm": chasm_pts, "roads": roads}
 
 
 static func _paving(kind: String, rc: Array, x: int, y: int, dn: float, hsh: float) -> Color:
@@ -365,31 +404,31 @@ static func _paving(kind: String, rc: Array, x: int, y: int, dn: float, hsh: flo
 	return rc[1]
 
 
-static func _decor_image(name: String) -> Image:
-	var d: Dictionary = DECOR[name]
+static func _decor_image(dname: String) -> Image:
+	var d: Dictionary = DECOR[dname]
 	return PixelCreepSprites._rasterize(d["rows"], int(d["w"]), d["pal"], d["outline"])
 
 
-static func _free_spot(p: Vector2, r: float, stage_def: Dictionary, road: PackedFloat32Array, water: PackedFloat32Array, chasm: PackedFloat32Array, taken: Array) -> bool:
-	if p.x < 4 or p.x > 428 or p.y < 30 or p.y > 244:
+static func _free_spot(p: Vector2, r: float, stage_def: Dictionary, road: PackedFloat32Array, water: PackedFloat32Array, chasm: PackedFloat32Array, taken: Array, w: int, h: int, gate: Vector2) -> bool:
+	if p.x < 4 or p.x > gate.x - 14.0 or p.y < 10 or p.y > float(h) - 4.0:
 		return false
-	var ix := clampi(int(p.x), 0, W - 1)
-	var iy := clampi(int(p.y), 0, H - 1)
+	var ix := clampi(int(p.x), 0, w - 1)
+	var iy := clampi(int(p.y), 0, h - 1)
 	for dy in [-r, 0.0, r]:
 		for dx in [-r, 0.0, r]:
-			var jx := clampi(ix + int(dx), 0, W - 1)
-			var jy := clampi(iy + int(dy), 0, H - 1)
-			if road[jy * W + jx] < 15.0:
+			var jx := clampi(ix + int(dx), 0, w - 1)
+			var jy := clampi(iy + int(dy), 0, h - 1)
+			if road[jy * w + jx] < 15.0:
 				return false
-			if water.size() > 0 and water[jy * W + jx] < 21.0:
+			if water.size() > 0 and water[jy * w + jx] < 21.0:
 				return false
-			if chasm.size() > 0 and chasm[jy * W + jx] < 11.0:
+			if chasm.size() > 0 and chasm[jy * w + jx] < 11.0:
 				return false
 	for pad in stage_def.get("pads", []):
 		if p.distance_to(pad["pos"]) < 22.0 + r:
 			return false
-	for h in stage_def.get("hero_spawns", []):
-		if p.distance_to(h) < 14.0 + r:
+	for hs in stage_def.get("hero_spawns", []):
+		if p.distance_to(hs) < 14.0 + r:
 			return false
 	for q in taken:
 		if p.distance_to(q) < r + 6.0:
@@ -397,7 +436,7 @@ static func _free_spot(p: Vector2, r: float, stage_def: Dictionary, road: Packed
 	return true
 
 
-static func _place_decor(img: Image, stage_def: Dictionary, biome: String, road: PackedFloat32Array, water: PackedFloat32Array, chasm: PackedFloat32Array, rng: RandomNumberGenerator, braziers: Array) -> void:
+static func _place_decor(img: Image, stage_def: Dictionary, biome: String, road: PackedFloat32Array, water: PackedFloat32Array, chasm: PackedFloat32Array, rng: RandomNumberGenerator, braziers: Array, w: int, h: int, gate: Vector2) -> void:
 	var plan: Array = []
 	match biome:
 		"bridge": plan = [["tree", 12, 8.0], ["bush", 12, 5.0], ["rock", 6, 4.0]]
@@ -405,88 +444,94 @@ static func _place_decor(img: Image, stage_def: Dictionary, biome: String, road:
 		"siege": plan = [["brazier", 6, 5.0], ["crate", 8, 4.0], ["bush", 5, 5.0]]
 		"snow": plan = [["pine", 16, 7.0], ["snowrock", 8, 4.0], ["icecrystal", 8, 4.0]]
 		"abyss": plan = [["redcrystal", 10, 4.0], ["crystal", 8, 4.0], ["monolith", 5, 5.0], ["rock", 6, 4.0]]
+	var area_k := maxf(1.0, float(w * h) / (480.0 * 270.0) * 0.8)
 	var taken: Array = []
 	for spec in plan:
-		var name: String = spec[0]
-		var want: int = spec[1]
+		var dname: String = spec[0]
+		var want: int = int(float(spec[1]) * area_k)
 		var r: float = spec[2]
-		var dimg := _decor_image(name)
+		var dimg := _decor_image(dname)
 		var placed := 0
 		var tries := 0
-		while placed < want and tries < want * 60:
+		while placed < want and tries < want * 40:
 			tries += 1
-			var p := Vector2(rng.randf_range(8, 426), rng.randf_range(32, 242))
-			if not _free_spot(p, r, stage_def, road, water, chasm, taken):
+			var p := Vector2(rng.randf_range(8, float(w) - 8.0), rng.randf_range(12, float(h) - 6.0))
+			if not _free_spot(p, r, stage_def, road, water, chasm, taken, w, h, gate):
 				continue
 			taken.append(p)
 			placed += 1
 			var dst := Vector2i(int(p.x - dimg.get_width() * 0.5), int(p.y - dimg.get_height()))
-			_shadow(img, Vector2i(int(p.x), int(p.y)), int(dimg.get_width() * 0.4))
+			_shadow(img, Vector2i(int(p.x), int(p.y)), int(dimg.get_width() * 0.4), w, h)
 			img.blend_rect(dimg, Rect2i(Vector2i.ZERO, dimg.get_size()), dst)
-			if name == "brazier":
+			if dname == "brazier":
 				braziers.append(Vector2(p.x, p.y - 5))
-	if biome == "bridge":
-		# lily pads on the river
-		for k in range(7):
-			var ly := 40.0 + float(k) * 30.0 + rng.randf_range(-6, 6)
-			var lx := 184.0 + sin((ly - 18.0) / 14.0 * 0.45) * 6.5 + rng.randf_range(-7, 7)
-			var li := clampi(int(ly), 0, H - 1) * W + clampi(int(lx), 0, W - 1)
+	if biome == "bridge" and water.size() > 0:
+		var river: PackedVector2Array = PackedVector2Array(stage_def.get("features", {}).get("river", []))
+		for k in range(int(10 * area_k * 0.5)):
+			if river.size() < 2:
+				break
+			var base := _point_at(river, rng.randf() * _poly_len(river))
+			var lx := base.x + rng.randf_range(-7, 7)
+			var ly := base.y + rng.randf_range(-6, 6)
+			var li := clampi(int(ly), 0, h - 1) * w + clampi(int(lx), 0, w - 1)
 			if road[li] < 16.0:
 				continue
 			for dy in range(-2, 3):
 				for dx in range(-3, 4):
 					if dx * dx + dy * dy * 2 <= 9:
-						img.set_pixel(clampi(int(lx) + dx, 0, W - 1), clampi(int(ly) + dy, 0, H - 1), Color(0.22, 0.56, 0.26) if dx != 1 else Color(0.16, 0.42, 0.20))
-			img.set_pixel(clampi(int(lx) - 1, 0, W - 1), clampi(int(ly) - 1, 0, H - 1), Color(1.0, 0.70, 0.80))
+						img.set_pixel(clampi(int(lx) + dx, 0, w - 1), clampi(int(ly) + dy, 0, h - 1), Color(0.22, 0.56, 0.26) if dx != 1 else Color(0.16, 0.42, 0.20))
+			img.set_pixel(clampi(int(lx) - 1, 0, w - 1), clampi(int(ly) - 1, 0, h - 1), Color(1.0, 0.70, 0.80))
 
 
-static func _shadow(img: Image, base: Vector2i, rx: int) -> void:
+static func _shadow(img: Image, base: Vector2i, rx: int, w: int, h: int) -> void:
 	for dx in range(-rx, rx + 1):
 		for dy in range(-1, 2):
 			var x := base.x + dx
 			var y := base.y + dy
-			if x >= 0 and x < W and y >= 0 and y < H:
+			if x >= 0 and x < w and y >= 0 and y < h:
 				img.set_pixel(x, y, img.get_pixel(x, y).darkened(0.25))
 
 
-static func _paint_castle(img: Image, stone: Color, biome: String) -> void:
+static func _px(img: Image, x: int, y: int, c: Color, w: int, h: int) -> void:
+	if x >= 0 and x < w and y >= 0 and y < h:
+		img.set_pixel(x, y, c)
+
+
+static func _paint_castle(img: Image, stone: Color, biome: String, g: Vector2i, w: int, h: int) -> void:
 	var ink := Color(0.07, 0.06, 0.09)
 	var st_hi := stone.lightened(0.18)
 	var st_dk := stone.darkened(0.30)
 	var st_face := stone.darkened(0.45)
-	# Curtain wall along the right edge
-	for y in range(30, 244):
-		for x in range(446, 480):
+	var top := maxi(0, g.y - 200)
+	var bottom := mini(h, g.y + 200)
+	for y in range(top, bottom):
+		for x in range(g.x + 11, w):
 			var c := stone
 			if (x + ((y / 4) % 2) * 3) % 7 == 0 or y % 4 == 0:
 				c = st_dk
-			img.set_pixel(x, y, c)
-		for x in range(440, 446):
-			img.set_pixel(x, y, st_face if y % 4 != 0 else st_face.darkened(0.2))
-		img.set_pixel(439, y, ink)
-	# Crenellations
-	for y in range(30, 244, 8):
+			_px(img, x, y, c, w, h)
+		for x in range(g.x + 5, g.x + 11):
+			_px(img, x, y, st_face if y % 4 != 0 else st_face.darkened(0.2), w, h)
+		_px(img, g.x + 4, y, ink, w, h)
+	for y in range(top, bottom, 8):
 		for yy in range(y, y + 4):
-			for xx in range(436, 440):
-				img.set_pixel(xx, yy, st_hi)
-			img.set_pixel(435, yy, ink)
-	# Twin bastion towers (P1 north / P2 south) with conical roofs
+			for xx in range(g.x + 1, g.x + 5):
+				_px(img, xx, yy, st_hi, w, h)
+			_px(img, g.x, yy, ink, w, h)
 	var roof_cols := [UIKit.P1.darkened(0.25), UIKit.P2.darkened(0.25)]
-	var towers := [Vector2i(457, 76), Vector2i(457, 188)]
+	var towers := [Vector2i(g.x + 22, g.y - 60), Vector2i(g.x + 22, g.y + 52)]
 	for ti in range(2):
 		var tc: Vector2i = towers[ti]
 		for y in range(tc.y - 18, tc.y + 16):
 			for x in range(tc.x - 14, tc.x + 15):
-				var edge := absi(x - tc.x) >= 13 or y == tc.y + 15
+				var is_edge := absi(x - tc.x) >= 13 or y == tc.y + 15
 				var c := st_hi if x < tc.x - 6 else (stone if x < tc.x + 6 else st_dk)
 				if (y % 5 == 0) or ((x + (y / 5) * 4) % 9 == 0):
 					c = c.darkened(0.18)
-				img.set_pixel(x, y, ink if edge else c)
-		# window
+				_px(img, x, y, ink if is_edge else c, w, h)
 		for y in range(tc.y - 4, tc.y + 3):
 			for x in range(tc.x - 2, tc.x + 2):
-				img.set_pixel(x, y, Color(1.0, 0.80, 0.40) if y > tc.y - 4 else ink)
-		# roof
+				_px(img, x, y, Color(1.0, 0.80, 0.40) if y > tc.y - 4 else ink, w, h)
 		var rc: Color = roof_cols[ti]
 		for row in range(14):
 			var half := 1 + row
@@ -495,36 +540,32 @@ static func _paint_castle(img: Image, stone: Color, biome: String) -> void:
 				var c := rc.lightened(0.25) if x < tc.x else rc
 				if (x + row) % 4 == 0:
 					c = c.darkened(0.15)
-				img.set_pixel(clampi(x, 0, W - 1), y, c)
-			img.set_pixel(clampi(tc.x - half - 1, 0, W - 1), y, ink)
-			img.set_pixel(clampi(tc.x + half + 1, 0, W - 1), y, ink)
-	# Gatehouse
-	var gy := 136
-	for y in range(gy - 26, gy + 26):
-		for x in range(430, 470):
-			var edge := x == 430 or x == 469 or y == gy - 26 or y == gy + 25
+				_px(img, x, y, c, w, h)
+			_px(img, tc.x - half - 1, y, ink, w, h)
+			_px(img, tc.x + half + 1, y, ink, w, h)
+	for y in range(g.y - 26, g.y + 26):
+		for x in range(g.x - 5, g.x + 35):
+			var is_edge := x == g.x - 5 or x == g.x + 34 or y == g.y - 26 or y == g.y + 25
 			var c := stone if (y % 5 != 0 and (x + (y / 5) * 3) % 8 != 0) else st_dk
-			if x < 438:
+			if x < g.x + 3:
 				c = st_face
-			img.set_pixel(x, y, ink if edge else c)
-	for x in range(428, 470, 6):
-		for y in range(gy - 30, gy - 26):
+			_px(img, x, y, ink if is_edge else c, w, h)
+	for x in range(g.x - 7, g.x + 35, 6):
+		for y in range(g.y - 30, g.y - 26):
 			for xx in range(x, x + 4):
-				img.set_pixel(clampi(xx, 0, W - 1), y, st_hi)
-	# Arched gate (dark) with portcullis
-	for y in range(gy - 13, gy + 14):
-		for x in range(430, 448):
-			var arch := y > gy - 9 or (float(x - 439) * float(x - 439) + float(y - (gy - 9)) * float(y - (gy - 9)) * 2.0) < 64.0
+				_px(img, xx, y, st_hi, w, h)
+	for y in range(g.y - 13, g.y + 14):
+		for x in range(g.x - 5, g.x + 13):
+			var arch := y > g.y - 9 or (float(x - (g.x + 4)) * float(x - (g.x + 4)) + float(y - (g.y - 9)) * float(y - (g.y - 9)) * 2.0) < 64.0
 			if arch:
 				var c := Color(0.06, 0.05, 0.08)
 				if x % 3 == 0 or y % 4 == 0:
 					c = Color(0.30, 0.28, 0.30)
-				img.set_pixel(x, y, c)
-	# Torches flanking the gate
-	for ty in [gy - 18, gy + 18]:
-		img.set_pixel(432, ty, Color(1.0, 0.85, 0.40))
-		img.set_pixel(432, ty + 1, Color(1.0, 0.50, 0.15))
+				_px(img, x, y, c, w, h)
+	for ty in [g.y - 18, g.y + 18]:
+		_px(img, g.x - 3, ty, Color(1.0, 0.85, 0.40), w, h)
+		_px(img, g.x - 3, ty + 1, Color(1.0, 0.50, 0.15), w, h)
 	if biome == "snow":
-		for x in range(436, 480):
-			for y in [30, 31, 110, 111]:
-				img.set_pixel(x, y, Color(0.96, 0.98, 1.0))
+		for x in range(g.x + 1, w):
+			for y in [top, top + 1, g.y - 26, g.y - 25]:
+				_px(img, x, y, Color(0.96, 0.98, 1.0), w, h)

@@ -83,12 +83,13 @@ func _ready() -> void:
 		["左键 塔位菜单 · 右键 移动英雄", UIKit.TEXT],
 		["Q 英雄技能 · T 支援50G · R 双星合体", UIKit.TEXT],
 		["Space 召唤波次 · F 加速 · Esc 暂停", UIKit.TEXT],
+		["WASD / 屏幕边缘 移动视角 · 滚轮缩放 · M 小地图", UIKit.TEXT],
 		["P2 (键盘右手区 / 手柄2)", UIKit.P2],
 		["方向键 移动光标 · Enter 菜单/确认", UIKit.TEXT],
 		["RShift 取消 · . 移动英雄", UIKit.TEXT],
 		["/ 英雄技能 · , 支援50G · RCtrl 合体", UIKit.TEXT],
 		["手柄：左摇杆光标 A确认 B取消", UIKit.TEXT_DIM],
-		["X技能 Y合体 RB英雄 LB支援 Start暂停", UIKit.TEXT_DIM],
+		["X技能 Y合体 RB英雄 LB支援 Start暂停 · 右摇杆移动视角", UIKit.TEXT_DIM],
 	]
 	for l in lines:
 		_help_box.add_child(UIKit.make_label(l[0], 6, l[1]))

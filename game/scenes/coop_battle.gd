@@ -8,8 +8,12 @@ extends Node2D
 const RETRO_DIR := "res://content/packs/jrpg_retro/"
 const PLAY_TOP := 22.0
 const PLAY_BOTTOM := 248.0
-const CURSOR_SPEED := 160.0
+const CURSOR_SPEED := 170.0
 const STICK_DEADZONE := 0.25
+const VIEW := Vector2(480, 270)
+const PAN_SPEED := 300.0
+const ZOOM_MIN := 0.45
+const ZOOM_MAX := 1.5
 
 const TUTORIAL: Array[Dictionary] = [
 	{"text": "教程 1/5：点击发光的塔位，在环形菜单中选择一座防御塔", "goal": "build", "hud": ""},
@@ -28,6 +32,11 @@ const TIPS: Array[String] = [
 	"提示：点击兵营可设置集结点，把卫兵部署到关键路口",
 	"提示：萨满会治疗附近敌人，用狙击塔优先击杀",
 	"提示：金币不够时，可以向搭档支援 50G",
+	"提示：塔被打坏会冒烟，点开塔就能修；塔塌了，在废墟上重建省三成",
+	"提示：敌人会绕开火力最猛的路，没人守的路口最危险",
+	"提示：WASD 或把鼠标推到屏幕边缘移动视角，滚轮缩放，M 开关小地图",
+	"提示：小地图上闪烁的红圈，是正在挨打的塔",
+	"提示：黄色的裂变史莱姆打死会分成两只",
 ]
 
 
@@ -45,6 +54,7 @@ class Seat:
 	var targeting: String = ""
 	var rally_pad: String = ""
 	var stick_latch: bool = false
+	var hold_t: float = 0.0
 
 
 var director := CoopTDDirector.new()
@@ -58,6 +68,20 @@ var hud: BattleHUD
 var pause_menu: PauseMenu
 var result_screen: ResultScreen
 var story: StoryDialogue
+var camera: Camera2D
+var world_size: Vector2 = VIEW
+var overlay: _Overlay
+var _user_zoom: float = 1.0
+var _zoom: float = 1.0
+var _cam_center: Vector2 = Vector2(240, 135)
+var _alerts: Array = [] # [{pos, ttl}]
+
+
+class _Overlay extends Control:
+	var scene: Node
+
+	func _draw() -> void:
+		scene._draw_overlay(self)
 
 var _speed_mult: float = 1.0
 var _is_finished: bool = false
@@ -77,6 +101,22 @@ func _ready() -> void:
 	var stage := CampaignData.get_stage_by_id(GameSession.selected_stage_id)
 	biome = TowerArtRenderer.get_biome_for_stage(str(stage["id"]))
 	director.setup_stage(stage, GameSession.meta, GameSession.difficulty, GameSession.endless_mode)
+	world_size = stage.get("world", VIEW)
+	camera = Camera2D.new()
+	camera.position_smoothing_enabled = false
+	add_child(camera)
+	camera.make_current()
+	var hs: Array = stage.get("hero_spawns", [])
+	_cam_center = (hs[0] as Vector2) + Vector2(-140, 20) if not hs.is_empty() else world_size * 0.5
+	_apply_camera()
+	var ol := CanvasLayer.new()
+	ol.layer = 4
+	add_child(ol)
+	overlay = _Overlay.new()
+	overlay.scene = self
+	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ol.add_child(overlay)
 	_setup_seats()
 	Input.joy_connection_changed.connect(_on_joy_changed)
 	_connect_signals()
@@ -87,6 +127,9 @@ func _ready() -> void:
 	hud.local_seats = _local_seat_ids()
 	hud.portraits = {1: UnitArtRenderer.get_portrait(1), 2: UnitArtRenderer.get_portrait(2)}
 	hud.action.connect(_on_hud_action)
+	hud.minimap_clicked.connect(func(wp: Vector2): _cam_center = wp)
+	hud.world_size = world_size
+	hud.road_polys = TerrainBaker.road_polylines(director.stage_def)
 	add_child(hud)
 	pause_menu = PauseMenu.new()
 	pause_menu.restart_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn"))
@@ -101,11 +144,16 @@ func _ready() -> void:
 	story = StoryDialogue.new()
 	add_child(story)
 
-	vfx.init_ambient_motes(biome, 24)
+	vfx.init_ambient_motes(biome, int(24.0 * world_size.x * world_size.y / (VIEW.x * VIEW.y)), Rect2(Vector2(8, 8), world_size - Vector2(16, 16)))
 	MoonRPG.play_bgm("bgm.forest")
 	_start_stage_story(stage)
 	if str(stage["id"]) == "stage_1_twin_bridge" and not GameSession.meta.tutorial_done and not _is_lan() and not director.endless:
 		_tutorial_step = 0
+		for pad in director.pads:
+			if int(pad.get("owner_hint", 0)) == 1:
+				_cam_center = (pad["pos"] as Vector2) + Vector2(60, 30)
+				break
+		_apply_camera()
 	_refresh_hud_keys()
 
 
@@ -225,9 +273,9 @@ func _is_lan() -> bool:
 func _connect_signals() -> void:
 	director.banner_event.connect(_show_banner)
 	director.gold_transferred.connect(func(fp: int, tp: int, amt: int, bonus: int):
-		var target := Vector2(70, 26) if tp == 1 else Vector2(410, 26)
-		vfx.spawn_float_text(target + Vector2(0, 14), "+%dG" % (amt + bonus), UIKit.GOLD, 8)
-		vfx.spawn_burst(target + Vector2(0, 16), UIKit.GOLD, 10, 50.0, 40.0)
+		var target := _screen_to_world(Vector2(70, 40) if tp == 1 else Vector2(410, 40))
+		vfx.spawn_float_text(target, "+%dG" % (amt + bonus), UIKit.GOLD, 8)
+		vfx.spawn_burst(target, UIKit.GOLD, 10, 50.0, 40.0)
 		MoonRPG.play_sfx("sfx.collect")
 		if fp == 2 and ai_enabled:
 			_show_banner("AI 搭档向你支援了 %dG" % (amt + bonus), UIKit.GOLD)
@@ -238,7 +286,7 @@ func _connect_signals() -> void:
 			_show_banner("AI 搭档请求【双星合体】！按 %s 响应！" % str(hud.keys[1]["ult"]), Color(1.0, 0.94, 0.3))
 	)
 	director.synchro_unleashed.connect(func(_h: int):
-		vfx.play_synchro_ultimate_cinematic()
+		vfx.play_synchro_ultimate_cinematic(_view_rect().grow(-30.0))
 		MoonRPG.play_sfx("sfx.quest_clear")
 	)
 	director.hero_skill_cast.connect(_on_hero_skill_cast)
@@ -314,8 +362,45 @@ func _connect_signals() -> void:
 	)
 	director.engine.creep_leaked.connect(func(_c: Dictionary, cost: int):
 		_shake(0.45)
-		vfx.spawn_float_text(Vector2(430, 120), "-%d 城防" % cost, UIKit.BAD, 8)
+		vfx.spawn_float_text(TerrainBaker.gate_pos(director.stage_def) + Vector2(-6, -18), "-%d 城防" % cost, UIKit.BAD, 8)
+		_add_alert(TerrainBaker.gate_pos(director.stage_def))
 		MoonRPG.play_sfx("sfx.hurt", -4.0)
+	)
+	director.creep_attack.connect(func(cr: Dictionary, tp: Vector2, kind: String, _dmg: float):
+		var cp: Vector2 = (cr["pos"] as Vector2) - Vector2(0, 8)
+		match kind:
+			"arrow":
+				vfx.spawn_projectile(cp, tp - Vector2(0, 12), "enemy_arrow")
+			"axe":
+				vfx.spawn_projectile(cp, tp - Vector2(0, 12), "axe")
+			"bolt":
+				vfx.spawn_projectile(cp, tp - Vector2(0, 12), "bolt")
+			"smash":
+				vfx.spawn_shockwave(tp, 16.0, Color(0.85, 0.75, 0.55), 0.25)
+				vfx.spawn_burst(tp - Vector2(0, 6), Color(0.60, 0.55, 0.50), 8, 50.0, 60.0)
+				_shake(0.12)
+				AudioManager.play_sfx("sfx.swing_heavy", -10.0, 0.1)
+			"explode":
+				vfx.spawn_shockwave(tp, 28.0, Color(1.0, 0.55, 0.20), 0.35)
+				vfx.spawn_burst(tp, Color(1.0, 0.62, 0.22), 18, 80.0, 30.0)
+				_shake(0.25)
+				AudioManager.play_sfx("sfx.hurt", -6.0, 0.1)
+	)
+	director.tower_damaged.connect(func(t: Dictionary, _d: float):
+		t["hit_flash"] = 0.10
+		_add_alert(t["pos"])
+	)
+	director.tower_destroyed.connect(func(owner: int, _pad: String, t: Dictionary):
+		var tp: Vector2 = t["pos"]
+		vfx.spawn_burst(tp - Vector2(0, 10), Color(0.62, 0.60, 0.58), 26, 90.0, 80.0)
+		vfx.spawn_burst(tp - Vector2(0, 14), UIKit.pcol(owner), 10, 60.0, 40.0)
+		vfx.spawn_shockwave(tp, 34.0, Color(1.0, 0.6, 0.3), 0.45)
+		vfx.spawn_float_text(tp - Vector2(0, 30), "塔被摧毁！", UIKit.BAD, 8)
+		_shake(0.6)
+		MoonRPG.play_sfx("sfx.door")
+	)
+	director.adaptive_pick.connect(func(_eid: String, reason: String):
+		_show_banner(reason, Color(1.0, 0.70, 0.40))
 	)
 	if GameSession.net != null and not GameSession.net.command_received.is_connected(_on_net_command):
 		GameSession.net.command_received.connect(_on_net_command)
@@ -470,9 +555,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if ms == null:
 			return
 		var mb := event as InputEventMouseButton
-		var pos := get_global_mouse_position()
-		if pos.y < PLAY_TOP or pos.y >= PLAY_BOTTOM:
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_user_zoom = clampf(_user_zoom + (0.1 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else -0.1), ZOOM_MIN, ZOOM_MAX)
+			get_viewport().set_input_as_handled()
 			return
+		if hud.is_point_on_hud(mb.position):
+			return
+		var pos := get_global_mouse_position()
 		ms.cursor = pos
 		_update_hover(ms)
 		match mb.button_index:
@@ -528,6 +617,10 @@ func _handle_key(k: InputEventKey) -> void:
 				_dispatch_cmd({"player_id": ms.pid, "action": "call_wave"})
 		KEY_F:
 			_cycle_speed()
+		KEY_M:
+			hud.minimap_visible = not hud.minimap_visible
+		KEY_HOME, KEY_C:
+			focus_camera(TerrainBaker.gate_pos(director.stage_def) + Vector2(-160, 0))
 	if ms != null:
 		match k.keycode:
 			KEY_Q:
@@ -639,6 +732,7 @@ func _seat_cancel(s: Seat) -> void:
 
 func _open_menu(s: Seat, pad_idx: int) -> void:
 	s.menu = RadialMenu.new()
+	s.menu.view_rect = _view_rect()
 	s.menu.build(director, pad_idx, s.pid)
 	s.menu.hover = -1
 	MoonRPG.play_sfx("sfx.ui_confirm", -10.0)
@@ -671,6 +765,7 @@ func _activate_option(s: Seat, idx: int) -> void:
 	cmd["player_id"] = s.pid
 	_dispatch_cmd(cmd)
 	if str(o["kind"]) == "priority":
+		s.menu.view_rect = _view_rect()
 		s.menu.build(director, s.menu.pad_idx, s.pid)
 		s.menu.anim = 1.0
 		s.menu.hover = idx
@@ -723,17 +818,22 @@ func _update_seat_motion(delta: float) -> void:
 				move.x += float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_RIGHT)) - float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_LEFT))
 				move.y += float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_DOWN)) - float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_UP))
 		if move.length() > 0.01:
-			s.cursor += move.limit_length(1.0) * CURSOR_SPEED * delta
-			s.cursor = Vector2(clampf(s.cursor.x, 6.0, 474.0), clampf(s.cursor.y, PLAY_TOP + 4.0, PLAY_BOTTOM - 4.0))
+			s.hold_t += delta
+			var accel := 1.0 + clampf((s.hold_t - 0.4) * 1.5, 0.0, 1.0)
+			s.cursor += move.limit_length(1.0) * CURSOR_SPEED * accel * delta
+			s.cursor = Vector2(clampf(s.cursor.x, 6.0, world_size.x - 6.0), clampf(s.cursor.y, 6.0, world_size.y - 6.0))
 			_update_hover(s)
-		elif (s.keyboard or s.pad_active) and s.hover_pad >= 0 and s.menu == null:
-			# gentle magnetic snap onto the hovered pad for keyboard / gamepad users
-			s.cursor = s.cursor.lerp(director.pads[s.hover_pad]["pos"], minf(1.0, delta * 10.0))
+		else:
+			s.hold_t = 0.0
+			if (s.keyboard or s.pad_active) and s.hover_pad >= 0 and s.menu == null:
+				# gentle magnetic snap onto the hovered pad for keyboard / gamepad users
+				s.cursor = s.cursor.lerp(director.pads[s.hover_pad]["pos"], minf(1.0, delta * 10.0))
 		if s.menu != null:
 			s.menu.tick(delta)
 			var keep_hover := s.menu.hover
 			var keep_anim := s.menu.anim
 			var keep_confirm := s.menu.confirm_sell
+			s.menu.view_rect = _view_rect()
 			s.menu.build(director, s.menu.pad_idx, s.pid)
 			s.menu.hover = keep_hover if keep_hover < s.menu.options.size() else -1
 			s.menu.anim = keep_anim
@@ -791,12 +891,14 @@ func _process(delta: float) -> void:
 	_kill_sfx_cd -= delta
 	var dt := delta * _speed_mult
 	vfx.tick(dt)
-	position = vfx.shake_offset if GameSettings.screen_shake else Vector2.ZERO
+	_update_camera(delta)
 	for cuid in _hit_flash.keys():
 		_hit_flash[cuid] = maxf(0.0, float(_hit_flash[cuid]) - delta)
 	for t in director.engine.towers.values():
 		if float(t.get("fire_anim", 0.0)) > 0.0:
 			t["fire_anim"] = maxf(0.0, float(t["fire_anim"]) - dt)
+		if float(t.get("hit_flash", 0.0)) > 0.0:
+			t["hit_flash"] = maxf(0.0, float(t["hit_flash"]) - delta)
 	_update_seat_motion(delta)
 	if not _is_finished:
 		director.tick(dt)
@@ -811,6 +913,7 @@ func _process(delta: float) -> void:
 	hud.speed_mult = _speed_mult
 	hud.refresh(delta)
 	queue_redraw()
+	overlay.queue_redraw()
 
 
 func _update_music() -> void:
@@ -828,7 +931,6 @@ func _finish_stage(won: bool) -> void:
 	if _is_finished:
 		return
 	_is_finished = true
-	position = Vector2.ZERO
 	for pid in seats.keys():
 		_close_menu(seats[pid])
 		(seats[pid] as Seat).targeting = ""
@@ -875,6 +977,189 @@ func _go_next_stage() -> void:
 		SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn")
 
 
+# ================================================================== camera
+
+func _half_view() -> Vector2:
+	return VIEW * 0.5 / _zoom
+
+
+## Visible playfield in world coordinates (excludes the HUD bars).
+func _view_rect() -> Rect2:
+	var hv := _half_view()
+	var top := PLAY_TOP / _zoom
+	var bottom := (VIEW.y - PLAY_BOTTOM) / _zoom
+	return Rect2(_cam_center - hv + Vector2(0, top), hv * 2.0 - Vector2(0, top + bottom))
+
+
+func _world_to_screen(p: Vector2) -> Vector2:
+	return (p - _cam_center) * _zoom + VIEW * 0.5
+
+
+func _screen_to_world(p: Vector2) -> Vector2:
+	return (p - VIEW * 0.5) / _zoom + _cam_center
+
+
+func focus_camera(world_pos: Vector2) -> void:
+	_cam_center = world_pos
+	_apply_camera()
+
+
+func _apply_camera() -> void:
+	if camera == null:
+		return
+	var hv := _half_view()
+	var min_c := Vector2(hv.x, hv.y - PLAY_TOP / _zoom)
+	var max_c := Vector2(world_size.x - hv.x, world_size.y - hv.y + (VIEW.y - PLAY_BOTTOM) / _zoom)
+	_cam_center.x = world_size.x * 0.5 if min_c.x > max_c.x else clampf(_cam_center.x, min_c.x, max_c.x)
+	_cam_center.y = world_size.y * 0.5 if min_c.y > max_c.y else clampf(_cam_center.y, min_c.y, max_c.y)
+	camera.zoom = Vector2(_zoom, _zoom)
+	camera.position = _cam_center
+	camera.offset = vfx.shake_offset if GameSettings.screen_shake else Vector2.ZERO
+
+
+func _update_camera(delta: float) -> void:
+	var pan := Vector2.ZERO
+	var ms := _mouse_seat()
+	if ms != null and not _is_finished:
+		pan.x += float(Input.is_key_pressed(KEY_D)) - float(Input.is_key_pressed(KEY_A))
+		pan.y += float(Input.is_key_pressed(KEY_S)) - float(Input.is_key_pressed(KEY_W))
+		var mp := get_viewport().get_mouse_position()
+		var vp := get_viewport().get_visible_rect()
+		if vp.has_point(mp) and DisplayServer.window_is_focused():
+			if mp.x < 5.0:
+				pan.x -= 1.0
+			elif mp.x > VIEW.x - 5.0:
+				pan.x += 1.0
+			if mp.y < 4.0:
+				pan.y -= 1.0
+			elif mp.y > VIEW.y - 4.0:
+				pan.y += 1.0
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if s.human and not s.remote and s.joy >= 0:
+			var rs := Vector2(Input.get_joy_axis(s.joy, JOY_AXIS_RIGHT_X), Input.get_joy_axis(s.joy, JOY_AXIS_RIGHT_Y))
+			if rs.length() > STICK_DEADZONE:
+				pan += rs
+	if pan.length() > 0.01:
+		_cam_center += pan.limit_length(1.0) * PAN_SPEED * delta / _zoom
+	# keep keyboard / gamepad cursors on screen, zoom out when the two players spread apart
+	var focus: Array[Vector2] = []
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if s.human and not s.remote:
+			if s.keyboard or (s.joy >= 0 and s.pad_active):
+				focus.append(s.cursor)
+			elif s.uses_mouse:
+				focus.append(s.cursor)
+	var want_zoom := _user_zoom
+	if focus.size() == 2:
+		var spread := (focus[0] - focus[1]).abs() + Vector2(70, 70)
+		var fit := minf(VIEW.x / spread.x, (PLAY_BOTTOM - PLAY_TOP) / spread.y)
+		want_zoom = clampf(minf(_user_zoom, fit), ZOOM_MIN, ZOOM_MAX)
+	_zoom = move_toward(_zoom, want_zoom, delta * 1.2)
+	var vr := _view_rect().grow(-18.0 / _zoom)
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if s.human and not s.remote and (s.keyboard or (s.joy >= 0 and s.pad_active)):
+			if s.cursor.x < vr.position.x:
+				_cam_center.x -= vr.position.x - s.cursor.x
+			elif s.cursor.x > vr.end.x:
+				_cam_center.x += s.cursor.x - vr.end.x
+			if s.cursor.y < vr.position.y:
+				_cam_center.y -= vr.position.y - s.cursor.y
+			elif s.cursor.y > vr.end.y:
+				_cam_center.y += s.cursor.y - vr.end.y
+	_apply_camera()
+	if ms != null and not ms.pad_active:
+		ms.cursor = get_global_mouse_position()
+		_update_hover(ms)
+	hud.view_rect = _view_rect()
+	for i in range(_alerts.size() - 1, -1, -1):
+		_alerts[i]["ttl"] = float(_alerts[i]["ttl"]) - delta
+		if float(_alerts[i]["ttl"]) <= 0.0:
+			_alerts.remove_at(i)
+	hud.alerts = _alerts
+
+
+func _add_alert(pos: Vector2) -> void:
+	for a in _alerts:
+		if (a["pos"] as Vector2).distance_to(pos) < 40.0:
+			a["ttl"] = 2.5
+			return
+	_alerts.append({"pos": pos, "ttl": 2.5})
+
+
+# ================================================================== screen overlay
+
+func _draw_overlay(c: Control) -> void:
+	var font := UIKit.get_font()
+	_draw_offscreen_arrows(c)
+	vfx.draw_cinematic_overlays(c, font)
+
+
+func _draw_offscreen_arrows(c: Control) -> void:
+	var vr := _view_rect()
+	var threats: Array = [] # [pos, color, icon, weight]
+	for cr in director.engine.creeps:
+		var cp: Vector2 = cr["pos"]
+		if vr.has_point(cp):
+			continue
+		if bool(cr.get("is_boss", false)):
+			threats.append([cp, UIKit.BAD, "skull", 6.0])
+		elif float(cr["progress"]) > 0.6:
+			threats.append([cp, Color(1.0, 0.55, 0.35), "sword", 1.0])
+	for a in _alerts:
+		if not vr.has_point(a["pos"]):
+			threats.append([a["pos"], Color(1.0, 0.35, 0.30), "flame", 3.0])
+	var nxt := director.get_next_wave_def()
+	if not nxt.is_empty() and not director.wave_dir.is_spawning and director.stage_def.has("graph"):
+		var g: Dictionary = director.stage_def["graph"]
+		for grp in nxt.get("groups", []):
+			var sp := str(grp["lane_id"])
+			if g["spawns"].has(sp):
+				var spos: Vector2 = g["nodes"][g["spawns"][sp]]
+				if not vr.has_point(spos):
+					threats.append([spos, UIKit.GOLD, "skull", 0.5])
+	if _tutorial_step == 0:
+		for pad in director.pads:
+			if int(pad.get("owner_hint", 0)) == 1 and not director.pad_to_tower_uid.has(str(pad["id"])):
+				if not vr.has_point(pad["pos"]):
+					threats.append([pad["pos"], UIKit.GOLD, "flag", 9.0])
+				break
+	# bucket by direction so arrows don't stack
+	var buckets := {}
+	var center := VIEW * 0.5 + Vector2(0, (PLAY_TOP - (VIEW.y - PLAY_BOTTOM)) * 0.5)
+	for th in threats:
+		var sp: Vector2 = _world_to_screen(th[0])
+		var dir := (sp - center)
+		var key := int(round(dir.angle() / (TAU / 16.0)))
+		if not buckets.has(key) or float(buckets[key][3]) < float(th[3]):
+			var count := 1 + (int(buckets[key][4]) if buckets.has(key) else 0)
+			buckets[key] = [th[0], th[1], th[2], th[3], count]
+		else:
+			buckets[key][4] = int(buckets[key][4]) + 1
+	var edge := Rect2(Vector2(10, PLAY_TOP + 10), Vector2(VIEW.x - 20, PLAY_BOTTOM - PLAY_TOP - 20))
+	var pulse := 0.7 + 0.3 * sin(_flow_t * 7.0)
+	for key in buckets.keys():
+		var b: Array = buckets[key]
+		var sp: Vector2 = _world_to_screen(b[0])
+		var dir := (sp - center).normalized()
+		var tmax := INF
+		if absf(dir.x) > 0.001:
+			tmax = minf(tmax, ((edge.end.x if dir.x > 0 else edge.position.x) - center.x) / dir.x)
+		if absf(dir.y) > 0.001:
+			tmax = minf(tmax, ((edge.end.y if dir.y > 0 else edge.position.y) - center.y) / dir.y)
+		var ap := center + dir * tmax
+		var col: Color = b[1]
+		var tip := ap + dir * 6.0
+		var perp := dir.orthogonal()
+		c.draw_colored_polygon(PackedVector2Array([tip, ap - dir * 2.0 + perp * 5.0, ap - dir * 2.0 - perp * 5.0]), Color(col.r, col.g, col.b, pulse))
+		c.draw_circle(ap - dir * 8.0, 6.0, Color(0.03, 0.03, 0.06, 0.85))
+		PixelIcons.draw_icon(c, str(b[2]), ap - dir * 8.0)
+		if int(b[4]) > 1:
+			UIKit.draw_text(c, ap - dir * 8.0 + Vector2(4, 8), str(int(b[4])), 6, col)
+
+
 # ================================================================== textures
 
 func _retro_tex(fname: String) -> Texture2D:
@@ -904,7 +1189,6 @@ func _draw() -> void:
 	_draw_wave_preview()
 	_draw_pings()
 	_draw_seat_overlays()
-	vfx.draw_cinematic_overlays(self, font)
 
 
 func _draw_pads() -> void:
@@ -918,6 +1202,8 @@ func _draw_pads() -> void:
 		var ptex := PixelTowerSprites.get_pad_texture(hint)
 		if ptex != null:
 			draw_texture_rect(ptex, Rect2(pp - Vector2(14, 10), Vector2(28, 22)), false)
+		if bool(pad.get("ruin", false)):
+			draw_texture_rect(PixelTowerSprites.get_ruin_texture(), Rect2(pp - Vector2(10, 6), Vector2(20, 6)), false)
 		for spid in [1, 2]:
 			var s: Seat = seats[spid]
 			if s.hover_pad == i and (s.human and not s.remote):
@@ -1043,11 +1329,27 @@ func _draw_wave_preview() -> void:
 			by_lane[lid] = []
 		if not (by_lane[lid] as Array).has(str(g["enemy_id"])):
 			(by_lane[lid] as Array).append(str(g["enemy_id"]))
+	var g: Dictionary = director.stage_def.get("graph", {})
+	if by_lane.has("random") and not g.is_empty():
+		var rnd: Array = by_lane["random"]
+		by_lane.erase("random")
+		for sp in (g["spawns"] as Dictionary).keys():
+			if not by_lane.has(sp):
+				by_lane[sp] = []
+			if not (by_lane[sp] as Array).has("?"):
+				(by_lane[sp] as Array).append("?")
+		if rnd.is_empty():
+			pass
 	for lid in by_lane.keys():
-		var lane: TDPathLane = director.engine.lanes.get(lid, null)
-		if lane == null:
-			continue
-		var p := lane.get_point_at_progress(0.0) + Vector2(12, 0)
+		var p := Vector2.ZERO
+		if not g.is_empty() and g["spawns"].has(lid):
+			var node: Vector2 = g["nodes"][g["spawns"][lid]]
+			p = node + (Vector2(14, 0) if node.x < 40.0 else (Vector2(0, 14) if node.y < 40.0 else (Vector2(0, -14) if node.y > world_size.y - 40.0 else Vector2.ZERO)))
+		else:
+			var lane: TDPathLane = director.engine.lanes.get(lid, null)
+			if lane == null:
+				continue
+			p = lane.get_point_at_progress(0.0) + Vector2(12, 0)
 		var pulse := 1.0 + 0.12 * sin(_flow_t * 6.0)
 		draw_circle(p, 8.0 * pulse, Color(0.35, 0.05, 0.06, 0.9))
 		draw_arc(p, 8.0 * pulse, 0.0, TAU, 20, UIKit.BAD, 1.5)
@@ -1057,12 +1359,14 @@ func _draw_wave_preview() -> void:
 		PixelIcons.draw_icon(self, "skull", p)
 		var ids: Array = by_lane[lid]
 		for k in range(mini(3, ids.size())):
-			var tex := _creep_texture(str(ids[k]))
 			var ip := p + Vector2(12 + k * 12, -6)
 			draw_rect(Rect2(ip, Vector2(11, 11)), Color(0.04, 0.04, 0.08, 0.85))
 			draw_rect(Rect2(ip, Vector2(11, 11)), Color(UIKit.BAD.r, UIKit.BAD.g, UIKit.BAD.b, 0.6), false, 1.0)
-			if tex != null:
-				draw_texture_rect(tex, Rect2(ip + Vector2(0.5, 0.5), Vector2(10, 10)), false)
+			var eid := str(ids[k])
+			if eid == "?" or eid == "adaptive":
+				UIKit.draw_text(self, ip + Vector2(0, 9), "?", 8, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER, 11)
+			else:
+				draw_texture_rect(_creep_texture(eid), Rect2(ip + Vector2(0.5, 0.5), Vector2(10, 10)), false)
 
 
 func _draw_pings() -> void:
@@ -1113,6 +1417,7 @@ func _draw_seat_overlays() -> void:
 func _draw_inspector(t: Dictionary) -> void:
 	var owner := int(director.tower_owners.get(str(t["uid"]), 1))
 	var lines: Array[String] = []
+	lines.append("耐久 %d/%d" % [int(t.get("hp", 0)), int(t.get("max_hp", 0))])
 	if str(t["role"]) == "barracks":
 		lines.append("卫兵 %d 名 · 生命 %d · 攻击 %d" % [int(t.get("soldier_count", 2)), int(t["soldier_hp"]), int(t["soldier_atk"])])
 	else:
@@ -1122,10 +1427,11 @@ func _draw_inspector(t: Dictionary) -> void:
 	var w := 122.0
 	var h := 13.0 + 8.0 * lines.size() + 3.0
 	var p: Vector2 = t["pos"]
+	var vr := _view_rect()
 	var x := p.x + 16.0
-	if x + w > 476.0:
+	if x + w > vr.end.x - 4.0:
 		x = p.x - 16.0 - w
-	var y := clampf(p.y - 34.0, PLAY_TOP + 2.0, PLAY_BOTTOM - h - 2.0)
+	var y := clampf(p.y - 34.0, vr.position.y + 2.0, vr.end.y - h - 2.0)
 	var r := Rect2(x, y, w, h)
 	UIKit.draw_panel(self, r, UIKit.pcol(owner))
 	UIKit.draw_text(self, r.position + Vector2(5, 9), title, 7, UIKit.GOLD)

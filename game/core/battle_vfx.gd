@@ -31,10 +31,12 @@ var boss_cutin_quote: String = ""
 var ult_cinematic_timer: float = 0.0
 var ult_comets: Array[Dictionary] = []
 var deaths: Array[Dictionary] = []
+var mote_area: Rect2 = Rect2(12, 34, 456, 200)
 var meteors: Array[Dictionary] = []
 
 
-func init_ambient_motes(biome: String, count: int = 24) -> void:
+func init_ambient_motes(biome: String, count: int = 24, area: Rect2 = Rect2(12, 34, 456, 200)) -> void:
+	mote_area = area
 	ambient_motes.clear()
 	var col := Color(1.0, 0.94, 0.45, 0.65)
 	if biome == "rift":
@@ -43,7 +45,7 @@ func init_ambient_motes(biome: String, count: int = 24) -> void:
 		col = Color(1.0, 0.72, 0.35, 0.62)
 	for i in range(count):
 		ambient_motes.append({
-			"pos": Vector2(randf_range(12.0, 468.0), randf_range(34.0, 234.0)),
+			"pos": Vector2(randf_range(area.position.x, area.end.x), randf_range(area.position.y, area.end.y)),
 			"vel": Vector2(randf_range(-8.0, 10.0), randf_range(-10.0, -3.0)),
 			"phase": randf_range(0.0, TAU),
 			"size": randf_range(1.0, 2.2),
@@ -75,13 +77,13 @@ func play_boss_cutin(bname: String, subtitle: String, portrait: Texture2D, quote
 	add_shake(0.55)
 
 
-func play_synchro_ultimate_cinematic() -> void:
+func play_synchro_ultimate_cinematic(view: Rect2 = Rect2(65, 68, 330, 137)) -> void:
 	ult_cinematic_timer = 1.85
 	ult_comets.clear()
 	add_shake(0.95)
-	for i in range(10):
+	for i in range(14):
 		var is_blue := (i % 2 == 0)
-		var target := Vector2(randf_range(65.0, 395.0), randf_range(68.0, 205.0))
+		var target := Vector2(randf_range(view.position.x, view.end.x), randf_range(view.position.y, view.end.y))
 		ult_comets.append({
 			"from": target + Vector2(-95.0 if is_blue else 95.0, -140.0),
 			"to": target,
@@ -95,6 +97,12 @@ func play_synchro_ultimate_cinematic() -> void:
 
 func spawn_projectile(from_pos: Vector2, to_pos: Vector2, kind: String, branch: String = "") -> void:
 	var speed := 340.0 if kind == "arrow" else (260.0 if kind == "frost" else 290.0)
+	if kind == "enemy_arrow":
+		speed = 300.0
+	elif kind == "axe":
+		speed = 200.0
+	elif kind == "bolt":
+		speed = 240.0
 	if branch == "sniper":
 		speed = 620.0
 	elif branch == "repeater":
@@ -191,9 +199,9 @@ func tick(delta: float) -> void:
 		m["phase"] = float(m["phase"]) + delta * 2.5
 		var p: Vector2 = (m["pos"] as Vector2) + (m["vel"] as Vector2) * delta
 		p.x += sin(float(m["phase"])) * 4.0 * delta
-		if p.y < 30.0: p.y = 236.0
-		if p.x < 4.0: p.x = 476.0
-		if p.x > 476.0: p.x = 4.0
+		if p.y < mote_area.position.y: p.y = mote_area.end.y
+		if p.x < mote_area.position.x: p.x = mote_area.end.x
+		if p.x > mote_area.end.x: p.x = mote_area.position.x
 		m["pos"] = p
 
 	# Projectiles
@@ -209,6 +217,11 @@ func tick(delta: float) -> void:
 			var k := str(pr["kind"])
 			var br := str(pr.get("branch", ""))
 			var col := Color(0.55, 0.94, 1.0) if k == "frost" else (Color(0.88, 0.50, 1.0) if k == "mage" else Color(1.0, 0.90, 0.45))
+			if k == "enemy_arrow" or k == "axe":
+				col = Color(0.85, 0.80, 0.70)
+			elif k == "bolt":
+				col = Color(0.75, 0.30, 1.0)
+				spawn_shockwave(pr["to"], 16.0, col, 0.25)
 			if br == "inferno":
 				col = Color(1.0, 0.55, 0.18)
 				spawn_shockwave(pr["to"], 26.0, col, 0.25)
@@ -303,6 +316,20 @@ func draw_world_fx(canvas: CanvasItem, font: Font) -> void:
 		var c: Color = sw["color"]
 		canvas.draw_arc(sw["pos"], float(sw["r"]), 0.0, TAU, 24, Color(c.r, c.g, c.b, frac * 0.9), 2.4 * frac + 0.6)
 
+	# Synchro comets (world space)
+	if ult_cinematic_timer > 0.0:
+		for c in ult_comets:
+			if float(c["delay"]) > 0.0 or bool(c["exploded"]):
+				continue
+			var frac := clampf(float(c["t"]) / float(c["dur"]), 0.0, 1.0)
+			var cur := (c["from"] as Vector2).lerp(c["to"] as Vector2, frac)
+			var tail := (c["from"] as Vector2).lerp(c["to"] as Vector2, maxf(0.0, frac - 0.28))
+			var col: Color = c["color"]
+			canvas.draw_line(tail, cur, Color(col.r, col.g, col.b, 0.65), 6.0)
+			canvas.draw_line(tail, cur, Color.WHITE, 2.2)
+			canvas.draw_circle(cur, 5.5, col)
+			canvas.draw_circle(cur, 2.6, Color.WHITE)
+
 	# Death pops (white flash, then puff up and fade)
 	for d in deaths:
 		var f := clampf(float(d["t"]) / float(d["dur"]), 0.0, 1.0)
@@ -331,6 +358,21 @@ func draw_world_fx(canvas: CanvasItem, font: Font) -> void:
 		var dir := ((pr["to"] as Vector2) - (pr["from"] as Vector2)).normalized()
 		var k := str(pr["kind"])
 		var br := str(pr.get("branch", ""))
+		if k == "enemy_arrow":
+			canvas.draw_line(p - dir * 6.0, p + dir * 2.0, Color(0.30, 0.18, 0.10), 1.5)
+			canvas.draw_line(p + dir * 1.0, p + dir * 3.0, Color(0.85, 0.85, 0.90), 1.5)
+			continue
+		if k == "axe":
+			var ang := float(pr["t"]) * 22.0
+			var ax := Vector2(cos(ang), sin(ang)) * 3.0
+			canvas.draw_line(p - ax, p + ax, Color(0.45, 0.30, 0.15), 1.5)
+			canvas.draw_rect(Rect2(p + ax - Vector2(1.5, 1.5), Vector2(3, 3)), Color(0.85, 0.86, 0.92))
+			continue
+		if k == "bolt":
+			canvas.draw_line(p - dir * 9.0, p, Color(0.55, 0.15, 0.85, 0.55), 3.5)
+			canvas.draw_circle(p, 3.0, Color(0.70, 0.30, 1.0))
+			canvas.draw_circle(p, 1.3, Color(1.0, 0.80, 1.0))
+			continue
 		if br == "sniper":
 			canvas.draw_line(p - dir * 16.0, p, Color(1.0, 0.95, 0.70, 0.45), 1.0)
 			canvas.draw_line(p - dir * 4.0, p + dir * 2.0, Color.WHITE, 1.5)
@@ -385,21 +427,10 @@ func draw_world_fx(canvas: CanvasItem, font: Font) -> void:
 
 
 func draw_cinematic_overlays(canvas: CanvasItem, font: Font) -> void:
-	# 1. Synchro Ultimate Sky Darken + Twin Comet Barrage!
+	# 1. Synchro Ultimate sky darken (comets themselves are drawn in the world layer)
 	if ult_cinematic_timer > 0.0:
 		var dim_a := minf(0.52, ult_cinematic_timer * 0.55)
-		canvas.draw_rect(Rect2(0, 28, 480, 210), Color(0.06, 0.02, 0.14, dim_a))
-		for c in ult_comets:
-			if float(c["delay"]) > 0.0 or bool(c["exploded"]):
-				continue
-			var frac := clampf(float(c["t"]) / float(c["dur"]), 0.0, 1.0)
-			var cur := (c["from"] as Vector2).lerp(c["to"] as Vector2, frac)
-			var tail := (c["from"] as Vector2).lerp(c["to"] as Vector2, maxf(0.0, frac - 0.28))
-			var col: Color = c["color"]
-			canvas.draw_line(tail, cur, Color(col.r, col.g, col.b, 0.65), 6.0)
-			canvas.draw_line(tail, cur, Color.WHITE, 2.2)
-			canvas.draw_circle(cur, 5.5, col)
-			canvas.draw_circle(cur, 2.6, Color.WHITE)
+		canvas.draw_rect(Rect2(0, 22, 480, 226), Color(0.06, 0.02, 0.14, dim_a))
 		# Dramatic Center Ult Banner
 		var band_a := clampf(ult_cinematic_timer / 0.5, 0.0, 1.0)
 		canvas.draw_rect(Rect2(0, 108, 480, 32), Color(0.18, 0.04, 0.30, 0.86 * band_a))

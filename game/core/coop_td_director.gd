@@ -26,6 +26,10 @@ signal creep_ability(creep: Dictionary, ability: String, pos: Vector2)
 signal combo_proc(kind: String, pos: Vector2, color: Color)
 signal wave_called(wave_index: int, bonus: int)
 signal countdown_started(seconds: float)
+signal creep_attack(creep: Dictionary, target_pos: Vector2, kind: String, damage: float)
+signal tower_damaged(tower: Dictionary, damage: float)
+signal tower_destroyed(owner: int, pad_id: String, tower: Dictionary)
+signal adaptive_pick(enemy_id: String, reason: String)
 
 const COMBO_RADIUS := 98.0
 ## Global balance knobs (tuned with tests/balance_sim.gd; the sim can override them per run).
@@ -39,9 +43,9 @@ const P1_COLOR := Color(0.55, 0.94, 1.0)
 const P2_COLOR := Color(1.0, 0.58, 0.58)
 
 const DIFFICULTIES: Dictionary = {
-	"casual": {"label": "休闲", "hp_mult": 0.70, "gold_add": 40, "lives_add": 5, "bounty_mult": 1.10, "countdown": 18.0},
-	"normal": {"label": "普通", "hp_mult": 1.00, "gold_add": 0, "lives_add": 0, "bounty_mult": 1.00, "countdown": 14.0},
-	"hard": {"label": "困难", "hp_mult": 1.32, "gold_add": -20, "lives_add": -5, "bounty_mult": 0.92, "countdown": 11.0},
+	"casual": {"label": "休闲", "hp_mult": 0.70, "gold_add": 40, "lives_add": 5, "bounty_mult": 1.10, "countdown": 20.0, "tower_dmg": 0.65, "cunning_add": -0.2},
+	"normal": {"label": "普通", "hp_mult": 1.00, "gold_add": 0, "lives_add": 0, "bounty_mult": 1.00, "countdown": 16.0, "tower_dmg": 1.0, "cunning_add": 0.0},
+	"hard": {"label": "困难", "hp_mult": 1.32, "gold_add": -20, "lives_add": -5, "bounty_mult": 0.92, "countdown": 13.0, "tower_dmg": 1.25, "cunning_add": 0.2},
 }
 
 const HERO_SKILLS: Dictionary = {
@@ -92,6 +96,15 @@ var hero_skill_max: Dictionary = {1: 16.0, 2: 14.0}
 var heroes: Dictionary = {} # player_id -> hero soldier dict
 var endless_best_wave: int = 0
 
+var routes: Array = [] # MapGraph routes: {id, spawn, nodes, points, node_dist, total, forks, sample_dist, suffix}
+var spawn_routes: Dictionary = {} # spawn id -> Array of route indices
+var air_routes: Dictionary = {} # spawn id -> flight lane id
+var route_index: Dictionary = {} # lane id -> route index
+var spawn_ids: Array[String] = []
+var rng := RandomNumberGenerator.new()
+var _danger_dirty: bool = true
+var _adaptive_wave: int = -99
+
 var _source_owner: Dictionary = {} # tower uid -> owner (kept after selling, for kill credit)
 var _diff: Dictionary = DIFFICULTIES["normal"]
 var _bounty_mult: float = 1.0
@@ -136,10 +149,46 @@ func setup_stage(stage: Dictionary, meta_prog: MetaProgress = null, diff: String
 	_bounty_mult = float(_diff["bounty_mult"])
 	_hp_mult = float(_diff["hp_mult"]) * float(stage_def.get("hp_scale", 1.0)) * tuning_hp_scale
 
-	for ldef in stage_def.get("lanes", []):
-		var lane := TDPathLane.new()
-		lane.setup(str(ldef["id"]), ldef["points"])
-		engine.register_lane(lane)
+	rng.seed = randi()
+	routes.clear()
+	spawn_routes.clear()
+	air_routes.clear()
+	route_index.clear()
+	spawn_ids.clear()
+	_danger_dirty = true
+	_adaptive_wave = -99
+	if stage_def.has("graph"):
+		var built := MapGraph.build_routes(stage_def["graph"])
+		routes = built["routes"]
+		for i in range(routes.size()):
+			var r: Dictionary = routes[i]
+			var lane := TDPathLane.new()
+			lane.setup(str(r["id"]), r["points"])
+			engine.register_lane(lane)
+			route_index[str(r["id"])] = i
+			if not spawn_routes.has(r["spawn"]):
+				spawn_routes[r["spawn"]] = []
+			(spawn_routes[r["spawn"]] as Array).append(i)
+			var forks := {}
+			for k in range((r["nodes"] as Array).size() - 1):
+				var alts := MapGraph.fork_alternatives(routes, i, k)
+				if not alts.is_empty():
+					forks[k] = alts
+			r["forks"] = forks
+		for sp in (built["air"] as Dictionary).keys():
+			var a: Dictionary = built["air"][sp]
+			var alane := TDPathLane.new()
+			alane.setup(str(a["id"]), a["points"])
+			engine.register_lane(alane)
+			air_routes[sp] = str(a["id"])
+		for sp in (stage_def["graph"]["spawns"] as Dictionary).keys():
+			spawn_ids.append(str(sp))
+	else:
+		for ldef in stage_def.get("lanes", []):
+			var lane := TDPathLane.new()
+			lane.setup(str(ldef["id"]), ldef["points"])
+			engine.register_lane(lane)
+			spawn_ids.append(str(ldef["id"]))
 
 	pads.clear()
 	for p in stage_def.get("pads", []):
@@ -195,7 +244,7 @@ func _init_hero(h: Dictionary, pid: int, hp: float, atk: float, home: Vector2) -
 
 
 func _new_stats() -> Dictionary:
-	return {"kills": 0, "damage": 0.0, "builds": 0, "upgrades": 0, "combo_procs": 0, "gold_sent": 0, "income": 0, "skill_casts": 0}
+	return {"kills": 0, "damage": 0.0, "builds": 0, "upgrades": 0, "combo_procs": 0, "gold_sent": 0, "income": 0, "skill_casts": 0, "towers_lost": 0, "repairs": 0}
 
 
 func _has_talent(tid: String) -> bool:
@@ -205,14 +254,370 @@ func _has_talent(tid: String) -> bool:
 # ---------------------------------------------------------------- spawning & enemy abilities
 
 func _on_spawn_requested(eid: String, lid: String, wi: int) -> void:
-	var c := engine.spawn_creep(eid, lid)
+	var spawn := lid
+	if spawn == "random" and not spawn_ids.is_empty():
+		spawn = spawn_ids[rng.randi() % spawn_ids.size()]
+	if eid == "adaptive":
+		eid = _counter_pick(wi)
+	var lane_id := spawn
+	if not routes.is_empty():
+		var def := CreepCatalog.get_def(eid)
+		if bool(def.get("is_flying", false)):
+			lane_id = str(air_routes.get(spawn, air_routes.values()[0]))
+		else:
+			if not spawn_routes.has(spawn):
+				spawn = str(spawn_routes.keys()[0])
+			lane_id = str(routes[_choose_route(spawn, def, 0.0, spawn_routes[spawn])]["id"])
+	var c := engine.spawn_creep(eid, lane_id)
 	if c.is_empty():
 		return
+	c["spawn"] = spawn
 	_init_creep(c, wi)
+
+
+## Every road route reachable from `spawn`, ranked by tower coverage (danger), length and enemy cunning.
+func _choose_route(_spawn: String, def: Dictionary, from_dist: float, cands: Array) -> int:
+	if cands.size() == 1:
+		return int(cands[0])
+	_refresh_danger()
+	var cunning := clampf(float(def.get("cunning", 0.5)) + float(_diff.get("cunning_add", 0.0)), 0.0, 1.0)
+	var siege := def.has("siege")
+	var dmin := INF
+	var dmax := -INF
+	var lmin := INF
+	var ds: Array[float] = []
+	var ls: Array[float] = []
+	for ri in cands:
+		var d := _route_danger_from(int(ri), from_dist)
+		var l := float(routes[int(ri)]["total"]) - from_dist
+		ds.append(d)
+		ls.append(l)
+		dmin = minf(dmin, d)
+		dmax = maxf(dmax, d)
+		lmin = minf(lmin, l)
+	var weights: Array[float] = []
+	var total := 0.0
+	for i in range(cands.size()):
+		var norm := (ds[i] - dmin) / (dmax - dmin + 1.0)
+		var w := exp((2.2 if siege else -3.4) * cunning * norm)
+		w *= exp(-1.4 * (ls[i] / maxf(1.0, lmin) - 1.0))
+		w *= rng.randf_range(0.6, 1.4)
+		weights.append(w)
+		total += w
+	var roll := rng.randf() * total
+	for i in range(cands.size()):
+		roll -= weights[i]
+		if roll <= 0.0:
+			return int(cands[i])
+	return int(cands[cands.size() - 1])
+
+
+func _refresh_danger() -> void:
+	if not _danger_dirty:
+		return
+	_danger_dirty = false
+	var tlist: Array = engine.towers.values()
+	for r in routes:
+		var pts: PackedVector2Array = r["points"]
+		var sd := PackedFloat32Array()
+		var dv := PackedFloat32Array()
+		var acc := 0.0
+		for i in range(pts.size() - 1):
+			var a := pts[i]
+			var b := pts[i + 1]
+			var seg := a.distance_to(b)
+			var n := maxi(1, int(seg / 16.0))
+			for k in range(n):
+				var p := a.lerp(b, float(k) / float(n))
+				var dval := 0.0
+				for t in tlist:
+					var tp: Vector2 = t["pos"]
+					if str(t["role"]) == "barracks":
+						if tp.distance_to(p) <= 80.0:
+							dval += 14.0 * float(t["level"])
+					elif tp.distance_to(p) <= float(t["range"]):
+						var mult := 1.0 + (0.5 if (float(t.get("splash_radius", 0.0)) > 0.0 or int(t.get("chain_count", 0)) > 0) else 0.0)
+						dval += float(t["damage"]) * float(t["fire_rate"]) * mult
+				sd.append(acc + seg * float(k) / float(n))
+				dv.append(dval)
+			acc += seg
+		var suffix := PackedFloat32Array()
+		suffix.resize(dv.size() + 1)
+		suffix[dv.size()] = 0.0
+		for i in range(dv.size() - 1, -1, -1):
+			suffix[i] = suffix[i + 1] + dv[i]
+		r["sample_dist"] = sd
+		r["suffix"] = suffix
+
+
+func _route_danger_from(ri: int, dist: float) -> float:
+	var r: Dictionary = routes[ri]
+	var sd: PackedFloat32Array = r["sample_dist"]
+	var idx := sd.bsearch(dist)
+	return float((r["suffix"] as PackedFloat32Array)[clampi(idx, 0, sd.size())])
+
+
+## Smart enemies re-think their route at every fork they reach.
+func _tick_reroute() -> void:
+	if routes.is_empty():
+		return
+	for c in engine.creeps:
+		if bool(c["is_flying"]) or float(c["hp"]) <= 0.0 or bool(c.get("diving", false)):
+			continue
+		var ri := int(c.get("route_idx", -1))
+		if ri < 0:
+			continue
+		var r: Dictionary = routes[ri]
+		var nd: Array = r["node_dist"]
+		var k := int(c.get("fork_k", 1))
+		if k >= nd.size() - 1:
+			continue
+		var dist := float(c["progress"]) * float(r["total"])
+		if dist + 1.0 < float(nd[k]):
+			continue
+		c["fork_k"] = k + 1
+		var forks: Dictionary = r["forks"]
+		if not forks.has(k):
+			continue
+		var def := CreepCatalog.get_def(str(c["enemy_id"]))
+		var cunning := clampf(float(def.get("cunning", 0.5)) + float(_diff.get("cunning_add", 0.0)), 0.0, 1.0)
+		if rng.randf() > 0.25 + 0.7 * cunning:
+			continue
+		var cands: Array = [ri]
+		cands.append_array(forks[k])
+		var ni := _choose_route(str(r["spawn"]), def, dist, cands)
+		if ni != ri:
+			var nr: Dictionary = routes[ni]
+			c["lane_id"] = str(nr["id"])
+			c["route_idx"] = ni
+			c["progress"] = clampf(dist / float(nr["total"]), 0.0, 1.0)
+
+
+## Adaptive groups counter the players' current tower mix.
+func _counter_pick(wi: int) -> String:
+	var phys := 0.0
+	var magic := 0.0
+	var barracks := 0
+	var count := 0
+	for t in engine.towers.values():
+		count += 1
+		if str(t["role"]) == "barracks":
+			barracks += 1
+		elif str(t["damage_type"]) == "physical":
+			phys += float(t["damage"]) * float(t["fire_rate"])
+		else:
+			magic += float(t["damage"]) * float(t["fire_rate"])
+	var w := {"wolf": 1.0, "goblin": 1.0}
+	var reason := "敌军改变了编制"
+	if count == 0:
+		return "wolf"
+	var share := phys / maxf(0.001, phys + magic)
+	if share > 0.6:
+		w["shield_bearer"] = 3.0
+		w["gargoyle"] = 2.0
+		reason = "斥候报告：敌人看到你们箭塔多，派来了盾卫和石像鬼"
+	elif share < 0.4:
+		w["assassin"] = 3.0
+		w["shaman"] = 1.5
+		reason = "斥候报告：敌人想用快兵冲过你们的法阵"
+	if float(barracks) / float(count) > 0.3:
+		w["bat"] = 2.0
+		w["bomb_bat"] = 2.0
+		reason = "斥候报告：敌人打算从空中绕过你们的卫兵"
+	if count >= 10:
+		w["troll_breaker"] = 1.5
+		w["goblin_archer"] = 2.0
+	var total := 0.0
+	for k in w.keys():
+		total += float(w[k])
+	var roll := rng.randf() * total
+	var pick := "wolf"
+	for k in w.keys():
+		roll -= float(w[k])
+		if roll <= 0.0:
+			pick = str(k)
+			break
+	if wi != _adaptive_wave:
+		_adaptive_wave = wi
+		adaptive_pick.emit(pick, reason)
+	return pick
+
+
+# ---------------------------------------------------------------- monster attacks & tower HP
+
+func _towers_near(pos: Vector2, r: float) -> Array:
+	var out: Array = []
+	for t in engine.towers.values():
+		var d := (t["pos"] as Vector2).distance_to(pos)
+		if d <= r:
+			out.append([d, t])
+	out.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
+	return out
+
+
+func _tick_creep_attacks(delta: float) -> void:
+	var tdm := float(_diff.get("tower_dmg", 1.0))
+	for c in engine.creeps.duplicate():
+		if float(c["hp"]) <= 0.0:
+			continue
+		var def := CreepCatalog.get_def(str(c["enemy_id"]))
+		var cp: Vector2 = c["pos"]
+		var stunned := float(c.get("stun_timer", 0.0)) > 0.0 and not bool(c.get("diving", false))
+		var ta: Dictionary = def.get("tower_attack", {})
+		if not ta.is_empty() and not stunned:
+			c["atk_timer"] = float(c.get("atk_timer", 0.6)) - delta
+			if float(c["atk_timer"]) <= 0.0:
+				var hits := _towers_near(cp, float(ta["range"]))
+				var fired := false
+				for k in range(mini(int(ta.get("count", 1)), hits.size())):
+					var t: Dictionary = hits[k][1]
+					creep_attack.emit(c, t["pos"], str(ta["kind"]), float(ta["damage"]) * tdm)
+					_damage_tower(t, float(ta["damage"]) * tdm)
+					fired = true
+				if not fired and bool(ta.get("soldiers", false)):
+					for s in engine.soldiers:
+						if float(s["hp"]) > 0.0 and (s["pos"] as Vector2).distance_to(cp) <= float(ta["range"]):
+							creep_attack.emit(c, s["pos"], str(ta["kind"]), float(ta["damage"]))
+							_damage_soldier(s, float(ta["damage"]))
+							fired = true
+							break
+				c["atk_timer"] = float(ta["interval"]) if fired else 0.3
+		var sg: Dictionary = def.get("siege", {})
+		if not sg.is_empty():
+			var near := _towers_near(cp, float(sg["reach"]))
+			if not near.is_empty() and not stunned and str(c.get("blocked_by", "")) == "":
+				c["sieging"] = true
+				c["speed"] = 0.0
+				c["siege_timer"] = float(c.get("siege_timer", 0.8)) - delta
+				if float(c["siege_timer"]) <= 0.0:
+					c["siege_timer"] = float(sg["interval"])
+					var t: Dictionary = near[0][1]
+					creep_attack.emit(c, t["pos"], "smash", float(sg["damage"]) * tdm)
+					_damage_tower(t, float(sg["damage"]) * tdm)
+			elif bool(c.get("sieging", false)):
+				c["sieging"] = false
+				c["speed"] = float(c.get("base_speed", c["speed"]))
+		var kz: Dictionary = def.get("kamikaze", {})
+		if not kz.is_empty():
+			if not bool(c.get("diving", false)):
+				var near2 := _towers_near(cp, float(kz["seek"]))
+				if not near2.is_empty() and not stunned:
+					c["diving"] = true
+					c["dive_target"] = str((near2[0][1] as Dictionary)["uid"])
+					c["stun_timer"] = 99.0
+			else:
+				var tgt: Dictionary = engine.towers.get(str(c.get("dive_target", "")), {})
+				if tgt.is_empty():
+					c["diving"] = false
+					c["stun_timer"] = 0.0
+					continue
+				var aim: Vector2 = (tgt["pos"] as Vector2) - Vector2(0, 10)
+				var step := float(c["base_speed"]) * 2.4 * delta
+				if cp.distance_to(aim) <= maxf(6.0, step):
+					for pair in _towers_near(aim, float(kz["radius"])):
+						_damage_tower(pair[1], float(kz["damage"]) * tdm)
+					creep_attack.emit(c, aim, "explode", float(kz["damage"]) * tdm)
+					c["self_destruct"] = true
+					c["bounty"] = 0
+					c["hp"] = 0.0
+				else:
+					c["pos"] = cp + (aim - cp).normalized() * step
+	engine._cleanup_dead_creeps()
+
+
+func _damage_soldier(s: Dictionary, dmg: float) -> void:
+	s["hp"] = float(s["hp"]) - dmg
+	if float(s["hp"]) <= 0.0:
+		s["hp"] = 0.0
+		s["respawn_timer"] = float(s.get("respawn_time", 6.0))
+
+
+func _damage_tower(t: Dictionary, dmg: float) -> void:
+	if not engine.towers.has(str(t["uid"])):
+		return
+	t["hp"] = float(t.get("hp", 100.0)) - dmg
+	t["last_hit_t"] = elapsed
+	tower_damaged.emit(t, dmg)
+	if float(t["hp"]) <= 0.0:
+		_destroy_tower(t)
+
+
+func _destroy_tower(t: Dictionary) -> void:
+	var uid := str(t["uid"])
+	var owner := int(tower_owners.get(uid, 0))
+	var pad_id := str(t.get("slot_id", ""))
+	engine.towers.erase(uid)
+	for i in range(engine.soldiers.size() - 1, -1, -1):
+		if str(engine.soldiers[i].get("owner_tower", "")) == uid:
+			engine.soldiers.remove_at(i)
+	tower_owners.erase(uid)
+	pad_to_tower_uid.erase(pad_id)
+	var pad := _find_pad(pad_id)
+	if not pad.is_empty():
+		pad["ruin"] = true
+		pad["ruin_tower"] = str(t["tower_id"])
+	if owner != 0:
+		stats[owner]["towers_lost"] = int(stats[owner].get("towers_lost", 0)) + 1
+	recompute_combos()
+	tower_destroyed.emit(owner, pad_id, t)
+	banner_event.emit("P%d 的【%s】被摧毁了！废墟上重建可省三成费用" % [owner, str(t["name"])], Color(1.0, 0.45, 0.35))
+
+
+func _tick_tower_regen(delta: float) -> void:
+	for t in engine.towers.values():
+		var mx := float(t.get("max_hp", 0.0))
+		if mx > 0.0 and float(t["hp"]) < mx and elapsed - float(t.get("last_hit_t", -99.0)) > 4.0:
+			t["hp"] = minf(mx, float(t["hp"]) + mx * 0.03 * delta)
+
+
+func get_build_cost(pad_id: String, tower_id: String) -> int:
+	var cost := get_tower_cost(tower_id)
+	var pad := _find_pad(pad_id)
+	if bool(pad.get("ruin", false)):
+		cost = int(round(float(cost) * 0.7))
+	return cost
+
+
+func get_repair_cost(pad_id: String) -> int:
+	var t := get_tower_at_pad(pad_id)
+	if t.is_empty():
+		return 0
+	var missing := 1.0 - float(t["hp"]) / maxf(1.0, float(t["max_hp"]))
+	if missing <= 0.01:
+		return 0
+	return maxi(5, int(ceil(missing * float(t["invested"]) * 0.35)))
+
+
+func repair_pad(player_id: int, pad_id: String) -> Dictionary:
+	var t := get_tower_at_pad(pad_id)
+	if t.is_empty():
+		return {"ok": false, "reason": "空塔位"}
+	if int(tower_owners.get(str(t["uid"]), 0)) != player_id:
+		return {"ok": false, "reason": "只能修理自己的塔"}
+	var cost := get_repair_cost(pad_id)
+	if cost <= 0:
+		return {"ok": false, "reason": "这座塔不需要修理"}
+	if int(gold[player_id]) < cost:
+		return {"ok": false, "reason": "P%d 金币不足(需%dG)" % [player_id, cost]}
+	gold[player_id] = int(gold[player_id]) - cost
+	t["hp"] = float(t["max_hp"])
+	stats[player_id]["repairs"] = int(stats[player_id].get("repairs", 0)) + 1
+	return {"ok": true, "cost": cost}
 
 
 func _init_creep(c: Dictionary, wave_index: int) -> void:
 	var def := CreepCatalog.get_def(str(c["enemy_id"]))
+	var ri := int(route_index.get(str(c["lane_id"]), -1))
+	c["route_idx"] = ri
+	c["fork_k"] = 1
+	if ri >= 0:
+		var dist := float(c["progress"]) * float(routes[ri]["total"])
+		var nd: Array = routes[ri]["node_dist"]
+		var k := 1
+		while k < nd.size() - 1 and float(nd[k]) <= dist:
+			k += 1
+		c["fork_k"] = k
+	c["atk_timer"] = 0.8
 	c["base_speed"] = float(c["speed"])
 	c["haste_timer"] = 0.0
 	c["haste_mult"] = 1.0
@@ -295,14 +700,17 @@ func _tick_creep_abilities(delta: float) -> void:
 			"frost_roar":
 				c["ab_timer"] = float(def.get("roar_interval", 8.0))
 				var freeze := float(def.get("roar_freeze", 2.2))
-				for t in engine.towers.values():
+				for t in engine.towers.values().duplicate():
 					if (t["pos"] as Vector2).distance_to(cp) <= float(def.get("roar_radius", 96.0)):
 						t["cooldown"] = maxf(float(t["cooldown"]), freeze)
 						t["frozen_timer"] = freeze
+						_damage_tower(t, float(def.get("roar_damage", 0.0)) * float(_diff.get("tower_dmg", 1.0)))
 				creep_ability.emit(c, "frost_roar", cp)
 
 
 func _on_creep_killed(creep: Dictionary, bounty: int) -> void:
+	if bool(creep.get("self_destruct", false)):
+		return
 	var share := maxi(1, int(ceil(float(bounty) * tuning_bounty_share * _bounty_mult)))
 	for pid in [1, 2]:
 		gold[pid] = int(gold[pid]) + share
@@ -416,6 +824,7 @@ func _combo_kind_for(id1: String, id2: String) -> String:
 
 
 func recompute_combos() -> Array[Dictionary]:
+	_danger_dirty = true
 	combo_links.clear()
 	var haste_counts: Dictionary = {}
 	var uids := engine.towers.keys()
@@ -496,7 +905,7 @@ func build_or_upgrade_pad(player_id: int, pad_id: String, tower_id: String, bran
 
 	if not engine.tower_defs.has(tower_id):
 		return {"ok": false, "reason": "未知塔种"}
-	var cost := get_tower_cost(tower_id)
+	var cost := get_build_cost(pad_id, tower_id)
 	if int(gold[player_id]) < cost:
 		return {"ok": false, "reason": "P%d 金币不足(需%dG)" % [player_id, cost]}
 	engine.gold = 99999
@@ -511,6 +920,11 @@ func build_or_upgrade_pad(player_id: int, pad_id: String, tower_id: String, bran
 		tower["frozen_timer"] = 0.0
 		tower["respawn_time"] = float(engine.tower_defs[tower_id].get("respawn_time", 6.0))
 		tower["block_count"] = int(engine.tower_defs[tower_id].get("block_count", 1))
+		tower["max_hp"] = float(engine.tower_defs[tower_id].get("max_hp", 160.0))
+		tower["hp"] = float(tower["max_hp"])
+		tower["last_hit_t"] = -99.0
+		tower["invested"] = cost
+		pad["ruin"] = false
 		tower_owners[tuid] = player_id
 		_source_owner[tuid] = player_id
 		pad_to_tower_uid[pad_id] = tuid
@@ -550,6 +964,9 @@ func upgrade_pad(player_id: int, pad_id: String, branch: int = -1) -> Dictionary
 	var sets: Dictionary = chosen.get("set", {})
 	for k in sets.keys():
 		t[k] = sets[k]
+	var hp_add := float(chosen.get("hp_add", 0.0))
+	t["max_hp"] = float(t.get("max_hp", 160.0)) + hp_add
+	t["hp"] = float(t.get("hp", t["max_hp"])) + hp_add
 	_sync_barracks_soldiers(t)
 	stats[player_id]["upgrades"] = int(stats[player_id]["upgrades"]) + 1
 	recompute_combos()
@@ -783,9 +1200,7 @@ func _ensure_endless_queue() -> void:
 
 ## Procedural endless wave: rotates themed rosters across all lanes; boss every 5th wave.
 func generate_endless_wave(index: int) -> Dictionary:
-	var lane_ids: Array[String] = []
-	for l in stage_def.get("lanes", []):
-		lane_ids.append(str(l["id"]))
+	var lane_ids: Array[String] = spawn_ids.duplicate()
 	var themes := [
 		["slime", "wolf"], ["goblin", "shield_bearer"], ["bat", "gargoyle"], ["splitter", "shaman"],
 		["assassin", "wolf"], ["shield_bearer", "shaman"], ["gargoyle", "assassin"], ["goblin", "splitter"],
@@ -813,6 +1228,8 @@ func execute_command(cmd: Dictionary) -> Dictionary:
 			return upgrade_pad(pid, str(cmd.get("pad_id", "")), int(cmd.get("branch", -1)))
 		"sell":
 			return sell_pad(pid, str(cmd.get("pad_id", "")))
+		"repair":
+			return repair_pad(pid, str(cmd.get("pad_id", "")))
 		"set_priority":
 			return set_tower_priority(pid, str(cmd.get("pad_id", "")), int(cmd.get("priority", 0)))
 		"set_rally":
@@ -851,9 +1268,12 @@ func tick(delta: float) -> void:
 		if float(t.get("frozen_timer", 0.0)) > 0.0:
 			t["frozen_timer"] = maxf(0.0, float(t["frozen_timer"]) - delta)
 	_tick_creep_abilities(delta)
+	_tick_creep_attacks(delta)
 	_tick_combo_passives(delta)
 	_tick_soldier_walk(delta)
+	_tick_tower_regen(delta)
 	engine.tick(delta)
+	_tick_reroute()
 	if synchro_pending_by != 0:
 		synchro_window_timer -= delta
 		if synchro_window_timer <= 0.0:
@@ -883,6 +1303,8 @@ func _nearest_lane_point(pos: Vector2) -> Vector2:
 	var best_d := INF
 	for lane in engine.lanes.values():
 		var l := lane as TDPathLane
+		if l.lane_id.ends_with("#air"):
+			continue
 		var steps := maxi(20, int(l.total_length / 6.0))
 		for step in range(steps + 1):
 			var pt := l.get_point_at_progress(float(step) / float(steps))
