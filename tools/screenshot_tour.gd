@@ -19,6 +19,10 @@ func _init() -> void:
 
 func _run() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
+	# keep Godot from importing (and exporting) the screenshots
+	var ig := FileAccess.open(OUT_DIR + ".gdignore", FileAccess.WRITE)
+	if ig != null:
+		ig.close()
 	var gs: Node = root.get_node("GameSession")
 	gs.meta = MetaProgress.new()
 	gs.meta.save_path = "user://_tour_meta.json"
