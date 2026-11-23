@@ -169,7 +169,7 @@ func _draw_player_block(c: Control, pid: int) -> void:
 	if dead:
 		c.draw_rect(portrait_r.grow(-1), Color(0, 0, 0, 0.6))
 		UIKit.draw_text(c, Vector2(px, 14), "%d" % ceili(float(hero.get("respawn_timer", 0.0))), 8, UIKit.BAD, HORIZONTAL_ALIGNMENT_CENTER, 18)
-	var name_txt := ("P1 苍穹游侠" if pid == 1 else "P2 绯红圣骑") + (" · AI" if ai_seat == pid else "")
+	var name_txt := ("P1 岚 · 苍穹游侠" if pid == 1 else "P2 赫 · 绯红圣骑") + (" · AI" if ai_seat == pid else "")
 	var nx := px + 22.0 if not right else px - 4.0
 	var align := HORIZONTAL_ALIGNMENT_LEFT if not right else HORIZONTAL_ALIGNMENT_RIGHT
 	var name_w := 70.0

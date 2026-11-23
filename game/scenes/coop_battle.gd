@@ -57,6 +57,7 @@ var seats: Dictionary = {}
 var hud: BattleHUD
 var pause_menu: PauseMenu
 var result_screen: ResultScreen
+var story: StoryDialogue
 
 var _speed_mult: float = 1.0
 var _is_finished: bool = false
@@ -97,12 +98,38 @@ func _ready() -> void:
 	result_screen.next_requested.connect(_go_next_stage)
 	add_child(result_screen)
 
+	story = StoryDialogue.new()
+	add_child(story)
+
 	vfx.init_ambient_motes(biome, 24)
-	vfx.play_stage_intro(str(stage["name"]), str(stage["subtitle"]))
 	MoonRPG.play_bgm("bgm.forest")
+	_start_stage_story(stage)
 	if str(stage["id"]) == "stage_1_twin_bridge" and not GameSession.meta.tutorial_done and not _is_lan() and not director.endless:
 		_tutorial_step = 0
 	_refresh_hud_keys()
+
+
+## First visit of a stage: play its intro dialogue, then the title curtain. Replays go straight to the curtain.
+func _start_stage_story(stage: Dictionary) -> void:
+	var sid := str(stage["id"])
+	var intro: Array = StoryData.get_stage(sid).get("intro", [])
+	var show := not director.endless and not _is_lan() and not intro.is_empty() and not GameSession.meta.has_seen(sid)
+	if show:
+		story.play(intro, func():
+			GameSession.meta.mark_seen(sid)
+			vfx.play_stage_intro(str(stage["name"]), str(stage["subtitle"])))
+	else:
+		vfx.play_stage_intro(str(stage["name"]), str(stage["subtitle"]))
+
+
+func _show_bark(line: Dictionary) -> void:
+	if line.is_empty() or hud == null:
+		return
+	var sp := StoryData.speaker(str(line["who"]))
+	var who := str(sp.get("name", "")).split(" · ")[0]
+	hud.banner_text = "%s：%s" % [who, str(line["text"])]
+	hud.banner_color = sp["color"]
+	_banner_ttl = 4.5
 
 
 func _exit_tree() -> void:
@@ -242,14 +269,17 @@ func _connect_signals() -> void:
 		MoonRPG.play_sfx("sfx.collect")
 	)
 	director.wave_called.connect(func(_wi: int, _bonus: int): _tutorial_goal("wave"))
-	director.wave_dir.wave_started.connect(func(_wi: int, wname: String):
+	director.wave_dir.wave_started.connect(func(wi: int, wname: String):
 		vfx.play_wave_banner(wname)
 		MoonRPG.play_sfx("sfx.door", -6.0)
+		if not director.endless:
+			_show_bark(StoryData.get_bark(str(director.stage_def["id"]), wi))
 	)
 	director.wave_dir.enemy_spawn_requested.connect(func(eid: String, _lid: String, _wi: int):
 		if CreepCatalog.is_boss(eid):
 			var bdef := CreepCatalog.get_def(eid)
-			vfx.play_boss_cutin(str(bdef["name"]), str(bdef.get("cutin_sub", "")), _creep_texture(eid))
+			var quote := "" if director.endless else StoryData.get_boss_line(str(director.stage_def["id"]), eid)
+			vfx.play_boss_cutin(str(bdef["name"]), str(bdef.get("cutin_sub", "")), _creep_texture(eid), quote)
 			MoonRPG.play_sfx("sfx.hurt")
 	)
 	director.engine.tower_fired.connect(func(t: Dictionary, tgt: Dictionary, dmg: float):
@@ -816,14 +846,25 @@ func _finish_stage(won: bool) -> void:
 	MoonRPG.play_bgm("bgm.village", 1.2)
 	var ids := CampaignData.get_stage_ids()
 	var next_idx := ids.find(sid) + 1
-	result_screen.show_result({
+	var st := StoryData.get_stage(sid)
+	var story_line := "" if director.endless else str(st.get("win" if won else "lose", ""))
+	if won and StoryData.is_final_stage(sid) and not director.endless:
+		story_line = "双星重新连上了。"
+	var data := {
 		"won": won, "stars": stars, "crown": won and director.difficulty == "hard", "difficulty": director.difficulty,
 		"endless": director.endless, "wave": director.wave_dir.current_wave_index + 1,
 		"best_wave": int(meta.endless_best.get(sid, 0)), "new_record": new_record,
 		"elapsed": director.elapsed, "leaks": director.leaks, "lives": director.engine.lives, "max_lives": director.max_lives,
 		"stats": director.stats, "mvp": director.get_mvp(), "stage_name": str(director.stage_def["name"]),
 		"has_next": next_idx > 0 and next_idx < ids.size() and not director.endless,
-	})
+		"story": story_line,
+	}
+	if won and StoryData.is_final_stage(sid) and not director.endless:
+		story.play(StoryData.EPILOGUE, func():
+			meta.mark_seen("ending")
+			result_screen.show_result(data))
+	else:
+		result_screen.show_result(data)
 
 
 func _go_next_stage() -> void:

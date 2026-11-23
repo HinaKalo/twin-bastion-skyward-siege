@@ -85,6 +85,8 @@ func _run_all() -> void:
 	_test_difficulty_and_endless()
 	_test_ai()
 	_test_presentation()
+	_test_story_data()
+	await _test_story_dialogue()
 	await _test_scenes()
 	await _test_battle_flow()
 
@@ -467,6 +469,7 @@ func _test_battle_flow() -> void:
 	var saved_meta: MetaProgress = gs.meta
 	var test_meta := _new_meta()
 	test_meta.tutorial_done = true
+	test_meta.story_seen = {"prologue": true, "stage_1_twin_bridge": true}
 	gs.meta = test_meta
 	gs.play_mode = 1 # LOCAL_2P
 	gs.selected_stage_id = "stage_1_twin_bridge"
@@ -560,6 +563,7 @@ func _test_battle_flow() -> void:
 		await process_frame
 	scene._finish_stage(true)
 	_assert_true(scene.result_screen.visible, "Result screen appears on victory")
+	_assert_true(str(scene.result_screen._data.get("story", "")) != "", "Result screen carries the stage's story line")
 	_assert_true(test_meta.get_stage_stars("stage_1_twin_bridge") > 0, "Victory records stars")
 	scene.queue_free()
 	await process_frame
@@ -567,7 +571,70 @@ func _test_battle_flow() -> void:
 	gs.play_mode = 0
 
 
+func _test_story_data() -> void:
+	for s in CampaignData.get_stages():
+		var sid := str(s["id"])
+		var st := StoryData.get_stage(sid)
+		_assert_true(not st.is_empty(), "%s has story data" % sid)
+		_assert_true(str(st.get("briefing", "")) != "" and UIKit.text_width(str(st["briefing"]), 6) <= 232.0 * 2.0, "%s briefing fits two card lines" % sid)
+		_assert_true((st.get("intro", []) as Array).size() >= 3, "%s has an intro dialogue" % sid)
+		_assert_true(str(st.get("lose", "")) != "", "%s has a defeat line" % sid)
+		var waves: Array = s["waves"]
+		for wi in (st.get("barks", {}) as Dictionary).keys():
+			_assert_true(int(wi) >= 0 and int(wi) < waves.size(), "%s bark wave %d exists" % [sid, int(wi)])
+		var bosses_here := {}
+		for w in waves:
+			for g in w["groups"]:
+				if CreepCatalog.is_boss(str(g["enemy_id"])):
+					bosses_here[str(g["enemy_id"])] = true
+		for b in bosses_here.keys():
+			_assert_true(StoryData.get_boss_line(sid, b) != "", "%s gives %s a line" % [sid, b])
+		for b in (st.get("bosses", {}) as Dictionary).keys():
+			_assert_true(bosses_here.has(b), "%s boss line for %s matches a boss in its waves" % [sid, b])
+		var lines: Array = (st.get("intro", []) as Array).duplicate()
+		for wi in (st.get("barks", {}) as Dictionary).keys():
+			var bark: Dictionary = st["barks"][wi]
+			_assert_true(UIKit.text_width("赫：" + str(bark["text"]), 7) <= 460.0, "%s bark fits the banner" % sid)
+			lines.append(bark)
+		for l in lines:
+			_assert_true(StoryData.SPEAKERS.has(str(l["who"])), "%s speaker %s exists" % [sid, l["who"]])
+			_assert_true(UIKit.text_width(str(l["text"]), 8) <= 388.0 * 3.0, "%s line fits the dialogue box" % sid)
+	for l in StoryData.PROLOGUE + StoryData.EPILOGUE:
+		_assert_true(StoryData.SPEAKERS.has(str(l["who"])) and str(l["text"]) != "", "Prologue / epilogue line is valid")
+	for who in StoryData.SPEAKERS.keys():
+		var spr := str(StoryData.SPEAKERS[who].get("sprite", ""))
+		_assert_true(spr == "" or PixelCreepSprites.SPRITES.has(spr), "Speaker %s has a portrait sprite" % who)
+
+
+func _test_story_dialogue() -> void:
+	var dlg := StoryDialogue.new()
+	root.add_child(dlg)
+	await process_frame
+	var done := [false]
+	dlg.play([{"who": "narrator", "text": "一"}, {"who": "lan", "text": "二二"}, {"who": "he", "text": "三"}], func(): done[0] = true)
+	_assert_true(dlg.active and paused, "Dialogue pauses the game while it plays")
+	dlg.next() # finish typing line 1
+	dlg.next() # line 2
+	_assert_eq(dlg._idx, 1, "Advancing moves to the next line")
+	dlg.next()
+	dlg.next()
+	dlg.next()
+	dlg.next()
+	_assert_true(done[0] and not dlg.active and not paused, "Dialogue ends, runs its callback and unpauses")
+	dlg.play([{"who": "narrator", "text": "跳过测试"}], func(): done[0] = false)
+	dlg._finish()
+	_assert_true(not done[0] and not paused, "Skipping still runs the callback and unpauses")
+	dlg.queue_free()
+	await process_frame
+
+
 func _test_scenes() -> void:
+	var gs: Node = root.get_node("GameSession")
+	var saved_meta: MetaProgress = gs.meta
+	var smoke_meta := _new_meta()
+	smoke_meta.story_seen = {"prologue": true, "stage_1_twin_bridge": true}
+	smoke_meta.tutorial_done = true
+	gs.meta = smoke_meta
 	for spath in [
 		"res://game/scenes/title_lobby.tscn",
 		"res://game/scenes/campaign_map.tscn",
@@ -584,3 +651,4 @@ func _test_scenes() -> void:
 				await process_frame
 			inst.queue_free()
 			await process_frame
+	gs.meta = saved_meta

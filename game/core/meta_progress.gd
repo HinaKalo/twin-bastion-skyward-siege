@@ -26,6 +26,7 @@ var hard_clears: Dictionary = {} # stage_id -> true
 var endless_best: Dictionary = {} # stage_id -> best wave reached
 var unlocked_talents: Dictionary = {} # talent_id -> bool
 var tutorial_done: bool = false
+var story_seen: Dictionary = {} # "prologue" / "<stage_id>" / "ending" -> true
 
 
 func get_total_stars() -> int:
@@ -106,6 +107,16 @@ func reset_talents() -> void:
 	save_to_disk()
 
 
+func has_seen(key: String) -> bool:
+	return bool(story_seen.get(key, false))
+
+
+func mark_seen(key: String) -> void:
+	if not has_seen(key):
+		story_seen[key] = true
+		save_to_disk()
+
+
 func mark_tutorial_done() -> void:
 	if not tutorial_done:
 		tutorial_done = true
@@ -124,6 +135,7 @@ func save_to_disk(path: String = "") -> bool:
 		"endless_best": endless_best,
 		"unlocked_talents": unlocked_talents,
 		"tutorial_done": tutorial_done,
+		"story_seen": story_seen,
 	}, "\t"))
 	f.close()
 	return true
@@ -146,4 +158,5 @@ func load_from_disk(path: String = "") -> bool:
 		endless_best[str(k)] = int(d["endless_best"][k])
 	unlocked_talents = (d.get("unlocked_talents", {}) as Dictionary).duplicate(true)
 	tutorial_done = bool(d.get("tutorial_done", false))
+	story_seen = (d.get("story_seen", {}) as Dictionary).duplicate(true)
 	return true

@@ -75,6 +75,19 @@ func show_result(data: Dictionary) -> void:
 	focus[0].call_deferred("grab_focus")
 
 
+func _wrap(text: String, size: int, width: float) -> Array[String]:
+	var out: Array[String] = []
+	var cur := ""
+	for ch in text:
+		if UIKit.text_width(cur + ch, size) > width and cur != "":
+			out.append(cur)
+			cur = ""
+		cur += ch
+	if cur != "":
+		out.append(cur)
+	return out
+
+
 func _draw_board(c: Control) -> void:
 	if _data.is_empty():
 		return
@@ -92,9 +105,16 @@ func _draw_board(c: Control) -> void:
 	var title := "无尽挑战结束" if endless else ("双子大捷！" if won else "防线失守……")
 	UIKit.draw_text(c, Vector2(band.position.x, band.position.y + 17), title, 13, Color(1.0, 0.95, 0.55) if won or endless else Color(1.0, 0.70, 0.66), HORIZONTAL_ALIGNMENT_CENTER, band.size.x)
 	UIKit.draw_text(c, Vector2(r.position.x, r.position.y + 42), str(_data.get("stage_name", "")), 7, UIKit.TEXT_DIM, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+	var story := str(_data.get("story", ""))
+	var story_h := 0.0
+	if story != "":
+		var lines := _wrap(story, 6, r.size.x - 40.0)
+		for li in range(lines.size()):
+			UIKit.draw_text(c, Vector2(r.position.x + 20, r.position.y + 52 + li * 8), lines[li], 6, Color(0.92, 0.88, 0.78), HORIZONTAL_ALIGNMENT_CENTER, r.size.x - 40)
+		story_h = 8.0 * lines.size()
 
 	# Stars or endless wave
-	var cy := r.position.y + 60.0
+	var cy := r.position.y + 60.0 + story_h
 	if endless:
 		UIKit.draw_text(c, Vector2(r.position.x, cy + 4), "坚守到第 %d 波" % int(_data.get("wave", 0)), 11, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 		var rec := "★ 新纪录！" if bool(_data.get("new_record", false)) else "最佳纪录：第 %d 波" % int(_data.get("best_wave", 0))
@@ -121,8 +141,8 @@ func _draw_board(c: Control) -> void:
 	var rows := [["击杀", "kills"], ["输出伤害", "damage"], ["建造 / 升级", "build"], ["连携触发", "combo_procs"], ["支援金币", "gold_sent"], ["英雄技能", "skill_casts"]]
 	var tx := r.position.x + 30.0
 	var ty := cy + 40.0
-	UIKit.draw_text(c, Vector2(tx + 110, ty), "P1 苍穹游侠", 7, UIKit.P1, HORIZONTAL_ALIGNMENT_CENTER, 80)
-	UIKit.draw_text(c, Vector2(tx + 200, ty), "P2 绯红圣骑", 7, UIKit.P2, HORIZONTAL_ALIGNMENT_CENTER, 80)
+	UIKit.draw_text(c, Vector2(tx + 110, ty), "P1 岚", 7, UIKit.P1, HORIZONTAL_ALIGNMENT_CENTER, 80)
+	UIKit.draw_text(c, Vector2(tx + 200, ty), "P2 赫", 7, UIKit.P2, HORIZONTAL_ALIGNMENT_CENTER, 80)
 	if mvp > 0 and _t > 1.0:
 		PixelIcons.draw_icon(c, "crown", Vector2(tx + 150 + (mvp - 1) * 90, ty - 12))
 		UIKit.draw_text(c, Vector2(tx + 156 + (mvp - 1) * 90, ty - 9), "MVP", 6, UIKit.GOLD)

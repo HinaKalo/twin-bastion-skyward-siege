@@ -33,7 +33,7 @@ const ROSTER: Dictionary = {
 		"desc": "极速突进，生命很低。"},
 	"gargoyle": {"name": "石像鬼", "hp": 132.0, "speed": 30.0, "armor": 14.0, "magic_resist": 0.10, "bounty": 30, "atk": 0.0, "is_flying": true,
 		"desc": "重甲飞行单位，需要魔法塔或狙击箭塔。"},
-	"boss_warlord": {"name": "哥布林铁甲督军", "hp": 520.0, "speed": 20.0, "armor": 12.0, "magic_resist": 0.15, "bounty": 90, "atk": 30.0, "life_cost": 4,
+	"boss_warlord": {"name": "哥布林督军·格罗什", "hp": 520.0, "speed": 20.0, "armor": 12.0, "magic_resist": 0.15, "bounty": 90, "atk": 30.0, "life_cost": 4,
 		"is_boss": true, "ability": "war_cry", "cry_interval": 6.5, "cry_radius": 64.0, "cry_haste": 1.4, "cry_duration": 3.0,
 		"cutin_sub": "战吼令周围敌人加速 · 用冰火超载击破！",
 		"desc": "周期性战吼，让附近敌人加速。"},

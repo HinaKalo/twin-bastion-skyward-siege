@@ -33,6 +33,12 @@ func _run() -> void:
 	await _open("res://game/scenes/title_lobby.tscn", 1.2)
 	await _shot("01_title")
 	await _open("res://game/scenes/campaign_map.tscn", 0.8)
+	var map_scene: Node = current_scene
+	if map_scene._story.active:
+		await create_timer(2.0).timeout
+		await _shot("02a_prologue")
+		map_scene._story._finish()
+		await create_timer(0.3).timeout
 	await _shot("02_map")
 
 	var stages := CampaignData.get_stages()
@@ -52,6 +58,12 @@ func _run() -> void:
 func _battle_states(n: int, sid: String) -> void:
 	await _open("res://game/scenes/coop_battle.tscn", 0.4)
 	var scene: Node = current_scene
+	if scene.story.active:
+		scene.story.next()
+		await create_timer(1.6).timeout
+		await _shot("s%d_00a_story" % n)
+		scene.story._finish()
+		await create_timer(0.3).timeout
 	await _shot("s%d_00_intro" % n)
 	await create_timer(2.6).timeout
 	await _shot("s%d_01_empty" % n)

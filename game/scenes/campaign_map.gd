@@ -21,6 +21,7 @@ var _launch_btn: Button
 var _talent_grid: GridContainer
 var _stars_label: Label
 var _settings: PauseMenu
+var _story: StoryDialogue
 
 
 func _ready() -> void:
@@ -33,6 +34,8 @@ func _ready() -> void:
 	_build_ui()
 	_refresh()
 	MoonRPG.play_bgm("bgm.village")
+	if not GameSession.meta.has_seen("prologue"):
+		_story.play(StoryData.PROLOGUE, func(): GameSession.meta.mark_seen("prologue"))
 
 
 func _process(delta: float) -> void:
@@ -96,6 +99,22 @@ func _build_ui() -> void:
 	add_child(gear)
 	_settings = PauseMenu.new()
 	add_child(_settings)
+	_story = StoryDialogue.new()
+	add_child(_story)
+
+	var replay := UIKit.make_button("剧情", Color(0.55, 0.42, 0.22), Vector2(28, 14), 6)
+	replay.position = Vector2(174, 194)
+	replay.pressed.connect(func():
+		var intro: Array = StoryData.get_stage(_selected).get("intro", [])
+		if GameSession.meta.is_stage_cleared(_selected) or GameSession.meta.has_seen(_selected):
+			_story.play(intro)
+		else:
+			MoonRPG.play_sfx("sfx.ui_back"))
+	add_child(replay)
+	var lore := UIKit.make_button("序章", Color(0.55, 0.42, 0.22), Vector2(34, 16), 7)
+	lore.position = Vector2(340, 3)
+	lore.pressed.connect(func(): _story.play(StoryData.PROLOGUE))
+	add_child(lore)
 
 	_stars_label = UIKit.make_label("", 7, UIKit.GOLD)
 	_stars_label.position = Vector2(150, 5)
@@ -250,25 +269,29 @@ func _draw() -> void:
 	var st := CampaignData.get_stage_by_id(_selected)
 	var meta := GameSession.meta
 	UIKit.draw_text(self, card.position + Vector2(6, 13), str(st["name"]), 9, UIKit.GOLD)
-	UIKit.draw_text(self, card.position + Vector2(6, 24), str(st["subtitle"]), 6, UIKit.TEXT_DIM)
+	var brief := str(StoryData.get_stage(_selected).get("briefing", st["subtitle"]))
+	var blines := _wrap(brief, 6, 232.0)
+	for li in range(mini(2, blines.size())):
+		UIKit.draw_text(self, card.position + Vector2(6, 23 + li * 8), blines[li], 6, Color(0.92, 0.88, 0.78))
 	var stars := meta.get_stage_stars(_selected)
 	for i in range(3):
-		PixelIcons.draw_icon(self, "star" if i < stars else "star_empty", card.position + Vector2(10 + i * 11, 35))
+		PixelIcons.draw_icon(self, "star" if i < stars else "star_empty", card.position + Vector2(10 + i * 11, 45))
 	if meta.hard_clears.has(_selected):
-		PixelIcons.draw_icon(self, "crown", card.position + Vector2(46, 35))
+		PixelIcons.draw_icon(self, "crown", card.position + Vector2(46, 45))
 	var best := int(meta.endless_best.get(_selected, 0))
-	UIKit.draw_text(self, card.position + Vector2(58, 38), "%d 波 · 无尽最佳 %s" % [(st["waves"] as Array).size(), ("第%d波" % best) if best > 0 else "—"], 6, UIKit.TEXT)
-	UIKit.draw_text(self, card.position + Vector2(6, 58), "新敌人", 6, UIKit.BAD)
+	UIKit.draw_text(self, card.position + Vector2(58, 48), "%d 波 · 无尽最佳 %s" % [(st["waves"] as Array).size(), ("第%d波" % best) if best > 0 else "—"], 6, UIKit.TEXT_DIM)
+	UIKit.draw_text(self, card.position + Vector2(6, 64), "新敌人", 6, UIKit.BAD)
 	var ex := card.position.x + 32.0
 	for eid in st.get("intro_enemies", []):
 		var tex := PixelCreepSprites.get_frame(str(eid), int(_t * 4.0))
 		var w := float(PixelCreepSprites.get_width(str(eid)))
-		var sz := 16.0 if w <= 16 else 20.0
-		draw_rect(Rect2(Vector2(ex, card.position.y + 46), Vector2(22, 22)), Color(0.02, 0.03, 0.06, 0.8))
-		draw_rect(Rect2(Vector2(ex, card.position.y + 46), Vector2(22, 22)), Color(UIKit.BAD.r, UIKit.BAD.g, UIKit.BAD.b, 0.4), false, 1.0)
-		draw_texture_rect(tex, Rect2(Vector2(ex + (22 - sz) * 0.5, card.position.y + 46 + (22 - sz) * 0.5), Vector2(sz, sz)), false)
-		ex += 25.0
-	UIKit.draw_text(self, Vector2(card.end.x - 4, card.position.y + 70), "Q/E · LB/RB 切换关卡", 5, UIKit.TEXT_DIM, HORIZONTAL_ALIGNMENT_RIGHT)
+		var sz := 14.0 if w <= 16 else 16.0
+		var br := Rect2(Vector2(ex, card.position.y + 54), Vector2(17, 17))
+		draw_rect(br, Color(0.02, 0.03, 0.06, 0.8))
+		draw_rect(br, Color(UIKit.BAD.r, UIKit.BAD.g, UIKit.BAD.b, 0.4), false, 1.0)
+		draw_texture_rect(tex, Rect2(br.get_center() - Vector2(sz, sz) * 0.5, Vector2(sz, sz)), false)
+		ex += 19.0
+	UIKit.draw_text(self, Vector2(card.end.x - 4, card.position.y + 70), "Q/E · LB/RB 切换", 5, UIKit.TEXT_DIM, HORIZONTAL_ALIGNMENT_RIGHT)
 
 	var rp := Rect2(258, 26, 216, 238)
 	UIKit.draw_panel(self, rp, UIKit.GOLD_DIM)
@@ -280,6 +303,19 @@ func _draw() -> void:
 	draw_rect(Rect2(262, 106, 208, 1), Color(UIKit.GOLD_DIM.r, UIKit.GOLD_DIM.g, UIKit.GOLD_DIM.b, 0.5))
 	UIKit.draw_text(self, Vector2(264, 119), "合作天赋", 8, UIKit.GOLD)
 	UIKit.draw_text(self, Vector2(306, 119), "用星星解锁永久加成", 6, UIKit.TEXT_DIM)
+
+
+func _wrap(text: String, size: int, width: float) -> Array[String]:
+	var out: Array[String] = []
+	var cur := ""
+	for ch in text:
+		if UIKit.text_width(cur + ch, size) > width and cur != "":
+			out.append(cur)
+			cur = ""
+		cur += ch
+	if cur != "":
+		out.append(cur)
+	return out
 
 
 func _draw_map_overlay() -> void:

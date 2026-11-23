@@ -210,7 +210,7 @@ func _draw() -> void:
 	UIKit.draw_text(self, Vector2(lx + 104, 42), "共守苍穹", 12, Color(0.80, 0.90, 1.0))
 	UIKit.draw_text(self, Vector2(lx + 2, 56), "TWIN BASTION  ·  2P CO-OP TOWER DEFENSE", 6, UIKit.TEXT_DIM)
 	draw_rect(Rect2(lx, 62, 196, 1), UIKit.GOLD_DIM)
-	UIKit.draw_text(self, Vector2(lx, 74), "跨玩家塔防连携 · 英雄技能 · 双星合体奥义", 7, UIKit.TEXT)
+	UIKit.draw_text(self, Vector2(lx, 74), "封印魔王的双星正在变暗，守塔的只有你们两个。", 7, UIKit.TEXT)
 	var meta := GameSession.meta
 	UIKit.draw_text(self, Vector2(lx, 86), "战役星数 %d★ · 已通关 %d/5" % [meta.get_total_stars(), _cleared_count()], 6, UIKit.GOLD_DIM)
 

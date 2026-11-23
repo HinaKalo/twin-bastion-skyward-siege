@@ -26,6 +26,7 @@ var boss_cutin_timer: float = 0.0
 var boss_cutin_name: String = ""
 var boss_cutin_sub: String = ""
 var boss_cutin_tex: Texture2D = null
+var boss_cutin_quote: String = ""
 
 var ult_cinematic_timer: float = 0.0
 var ult_comets: Array[Dictionary] = []
@@ -65,11 +66,12 @@ func play_wave_banner(text: String) -> void:
 	wave_banner_timer = 2.2
 
 
-func play_boss_cutin(bname: String, subtitle: String, portrait: Texture2D) -> void:
+func play_boss_cutin(bname: String, subtitle: String, portrait: Texture2D, quote: String = "") -> void:
+	boss_cutin_quote = quote
+	boss_cutin_timer = 3.4 if quote != "" else 2.8
 	boss_cutin_name = bname
 	boss_cutin_sub = subtitle
 	boss_cutin_tex = portrait
-	boss_cutin_timer = 2.8
 	add_shake(0.55)
 
 
@@ -407,20 +409,25 @@ func draw_cinematic_overlays(canvas: CanvasItem, font: Font) -> void:
 		PixelIcons.draw_icon(canvas, "meteor", Vector2(118, 124), 2, Color(1, 1, 1, band_a))
 		PixelIcons.draw_icon(canvas, "meteor", Vector2(362, 124), 2, Color(1, 1, 1, band_a))
 
-	# 2. Boss Warning Cut-In (Crimson Letterbox + Portrait!)
+	# 2. Boss Warning Cut-In (crimson letterbox + portrait + taunt)
 	if boss_cutin_timer > 0.0:
-		var a := clampf(minf(boss_cutin_timer * 2.0, (2.8 - boss_cutin_timer) * 4.0), 0.0, 1.0)
-		canvas.draw_rect(Rect2(0, 28, 480, 18), Color(0.04, 0.01, 0.02, 0.85 * a))
-		canvas.draw_rect(Rect2(0, 220, 480, 18), Color(0.04, 0.01, 0.02, 0.85 * a))
-		canvas.draw_rect(Rect2(0, 96, 480, 56), Color(0.32, 0.03, 0.06, 0.92 * a))
-		canvas.draw_line(Vector2(0, 96), Vector2(480, 96), Color(1.0, 0.28, 0.25, a), 2.0)
-		canvas.draw_line(Vector2(0, 152), Vector2(480, 152), Color(1.0, 0.28, 0.25, a), 2.0)
+		var total := 3.4 if boss_cutin_quote != "" else 2.8
+		var a := clampf(minf(boss_cutin_timer * 2.0, (total - boss_cutin_timer) * 4.0), 0.0, 1.0)
+		canvas.draw_rect(Rect2(0, 22, 480, 18), Color(0.04, 0.01, 0.02, 0.85 * a))
+		canvas.draw_rect(Rect2(0, 230, 480, 18), Color(0.04, 0.01, 0.02, 0.85 * a))
+		canvas.draw_rect(Rect2(0, 94, 480, 70), Color(0.32, 0.03, 0.06, 0.92 * a))
+		canvas.draw_line(Vector2(0, 94), Vector2(480, 94), Color(1.0, 0.28, 0.25, a), 2.0)
+		canvas.draw_line(Vector2(0, 164), Vector2(480, 164), Color(1.0, 0.28, 0.25, a), 2.0)
 		if boss_cutin_tex != null:
-			canvas.draw_texture_rect(boss_cutin_tex, Rect2(Vector2(88, 100), Vector2(48, 48)), false, Color(1, 1, 1, a))
-		canvas.draw_string(font, Vector2(158, 118), "强敌警报 · BOSS 来袭", HORIZONTAL_ALIGNMENT_LEFT, 260, 8, Color(1.0, 0.45, 0.35, a))
-		PixelIcons.draw_icon(canvas, "skull", Vector2(150, 115), 1, Color(1, 1, 1, a))
-		canvas.draw_string(font, Vector2(146, 136), boss_cutin_name, HORIZONTAL_ALIGNMENT_LEFT, 260, 12, Color(1.0, 0.95, 0.42, a))
-		canvas.draw_string(font, Vector2(146, 148), boss_cutin_sub, HORIZONTAL_ALIGNMENT_LEFT, 260, 7, Color(0.95, 0.86, 0.86, a))
+			var slide := (1.0 - a) * -30.0
+			canvas.draw_texture_rect(boss_cutin_tex, Rect2(Vector2(84 + slide, 104), Vector2(48, 48)), false, Color(1, 1, 1, a))
+		PixelIcons.draw_icon(canvas, "skull", Vector2(150, 110), 1, Color(1, 1, 1, a))
+		canvas.draw_string(font, Vector2(158, 113), "强敌警报 · BOSS 来袭", HORIZONTAL_ALIGNMENT_LEFT, 280, 7, Color(1.0, 0.45, 0.35, a))
+		canvas.draw_string(font, Vector2(146, 130), boss_cutin_name, HORIZONTAL_ALIGNMENT_LEFT, 300, 12, Color(1.0, 0.95, 0.42, a))
+		if boss_cutin_quote != "":
+			var q := boss_cutin_quote if boss_cutin_quote.begins_with("（") else "「%s」" % boss_cutin_quote
+			canvas.draw_string(font, Vector2(146, 144), q, HORIZONTAL_ALIGNMENT_LEFT, 320, 8, Color(1.0, 0.92, 0.90, a))
+		canvas.draw_string(font, Vector2(146, 157), boss_cutin_sub, HORIZONTAL_ALIGNMENT_LEFT, 320, 6, Color(0.95, 0.72, 0.70, a))
 
 	# 3. Wave Slide-In Banner
 	elif wave_banner_timer > 0.0:
