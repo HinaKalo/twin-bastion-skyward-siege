@@ -33,6 +33,8 @@ static var tuning_hp_scale: float = 1.5
 static var tuning_bounty_share: float = 0.50
 static var tuning_wave_ramp: float = 0.20
 const SYNCHRO_WINDOW_SEC := 5.0
+const RALLY_RANGE := 80.0
+const SOLDIER_WALK_SPEED := 55.0
 const P1_COLOR := Color(0.55, 0.94, 1.0)
 const P2_COLOR := Color(1.0, 0.58, 0.58)
 
@@ -516,7 +518,6 @@ func build_or_upgrade_pad(player_id: int, pad_id: String, tower_id: String, bran
 		stats[player_id]["builds"] = int(stats[player_id]["builds"]) + 1
 		recompute_combos()
 		tower_built.emit(player_id, pad_id, tower)
-		banner_event.emit("P%d 建造了【%s】" % [player_id, str(tower["name"])], _pcol(player_id))
 	return pres
 
 
@@ -553,7 +554,6 @@ func upgrade_pad(player_id: int, pad_id: String, branch: int = -1) -> Dictionary
 	stats[player_id]["upgrades"] = int(stats[player_id]["upgrades"]) + 1
 	recompute_combos()
 	tower_upgraded.emit(player_id, pad_id, t)
-	banner_event.emit("P%d 升级为【%s】Lv%d" % [player_id, str(t["name"]), int(t["level"])], _pcol(player_id))
 	return ures
 
 
@@ -576,8 +576,6 @@ func _sync_barracks_soldiers(t: Dictionary) -> void:
 		var s: Dictionary = mine[i]
 		var offset := Vector2((float(i) - float(mine.size() - 1) * 0.5) * 12.0, (i % 2) * 3.0)
 		s["home_pos"] = rally + offset
-		if float(s["hp"]) > 0.0 and (s["pos"] as Vector2).distance_to(rally) < 24.0:
-			s["pos"] = rally + offset
 		s["respawn_time"] = float(t.get("respawn_time", 6.0))
 		s["block_count"] = int(t.get("block_count", 1))
 		s["max_hp"] = float(t["soldier_hp"])
@@ -607,6 +605,40 @@ func set_tower_priority(player_id: int, pad_id: String, priority: int) -> Dictio
 		return {"ok": false, "reason": "只能调整自己的塔"}
 	t["priority"] = posmod(priority, 4)
 	return {"ok": true, "priority": int(t["priority"])}
+
+
+func set_barracks_rally(player_id: int, pad_id: String, pos: Vector2) -> Dictionary:
+	var t := get_tower_at_pad(pad_id)
+	if t.is_empty() or str(t.get("role", "")) != "barracks":
+		return {"ok": false, "reason": "只有兵营可以设置集结点"}
+	if int(tower_owners.get(str(t["uid"]), 0)) != player_id:
+		return {"ok": false, "reason": "只能调整自己的兵营"}
+	var snap := _nearest_lane_point(pos)
+	if snap.distance_to(pos) > 20.0:
+		return {"ok": false, "reason": "集结点必须在道路上"}
+	if snap.distance_to(t["pos"]) > RALLY_RANGE:
+		return {"ok": false, "reason": "集结点超出兵营范围"}
+	t["rally_pos"] = snap
+	_sync_barracks_soldiers(t)
+	return {"ok": true, "pos": snap}
+
+
+func _tick_soldier_walk(delta: float) -> void:
+	var engaged := {}
+	for c in engine.creeps:
+		var b := str(c.get("blocked_by", ""))
+		if b != "":
+			engaged[b] = true
+	for s in engine.soldiers:
+		if bool(s.get("is_hero", false)) or float(s["hp"]) <= 0.0 or engaged.has(str(s["uid"])):
+			continue
+		var home: Vector2 = s.get("home_pos", s["pos"])
+		var cur: Vector2 = s["pos"]
+		var d := home - cur
+		if d.length() > 0.5:
+			s["pos"] = cur + d.normalized() * minf(d.length(), SOLDIER_WALK_SPEED * delta)
+		else:
+			s["hp"] = minf(float(s["max_hp"]), float(s["hp"]) + 4.0 * delta)
 
 
 func transfer_gold(from_p: int, to_p: int, amount: int = 50) -> bool:
@@ -783,6 +815,8 @@ func execute_command(cmd: Dictionary) -> Dictionary:
 			return sell_pad(pid, str(cmd.get("pad_id", "")))
 		"set_priority":
 			return set_tower_priority(pid, str(cmd.get("pad_id", "")), int(cmd.get("priority", 0)))
+		"set_rally":
+			return set_barracks_rally(pid, str(cmd.get("pad_id", "")), Vector2(float(cmd.get("x", 0.0)), float(cmd.get("y", 0.0))))
 		"transfer_gold":
 			return {"ok": transfer_gold(pid, 2 if pid == 1 else 1, int(cmd.get("amount", 50)))}
 		"rally_hero":
@@ -818,6 +852,7 @@ func tick(delta: float) -> void:
 			t["frozen_timer"] = maxf(0.0, float(t["frozen_timer"]) - delta)
 	_tick_creep_abilities(delta)
 	_tick_combo_passives(delta)
+	_tick_soldier_walk(delta)
 	engine.tick(delta)
 	if synchro_pending_by != 0:
 		synchro_window_timer -= delta

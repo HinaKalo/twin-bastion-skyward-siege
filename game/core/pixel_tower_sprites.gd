@@ -11,8 +11,27 @@ extends RefCounted
 static var _cache: Dictionary = {}
 
 
-static func get_tower_texture(tid: String, owner: int) -> ImageTexture:
-	var key := "%s_%d" % [tid, owner]
+## Tiered tower sprite (32x40): base art + Lv2 gold trims + a distinct Lv3 silhouette per branch.
+static func get_tower_texture(tid: String, owner: int, level: int = 1, branch: String = "") -> ImageTexture:
+	var key := "tier_%s_%d_%d_%s" % [tid, owner, level, branch]
+	if _cache.has(key):
+		return _cache[key]
+	var base := _get_base_image(tid, owner)
+	var img := Image.create(32, 40, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	img.blit_rect(base, Rect2i(0, 0, 32, 36), Vector2i(0, 4))
+	var accent := Color(0.24, 0.72, 1.0) if owner == 1 else Color(0.96, 0.30, 0.36)
+	if level >= 2:
+		_paint_lv2(img, tid, accent)
+	if level >= 3:
+		_paint_branch(img, branch, accent)
+	var tex := ImageTexture.create_from_image(img)
+	_cache[key] = tex
+	return tex
+
+
+static func _get_base_image(tid: String, owner: int) -> Image:
+	var key := "base_%s_%d" % [tid, owner]
 	if _cache.has(key):
 		return _cache[key]
 	var img := Image.create(32, 36, false, Image.FORMAT_RGBA8)
@@ -30,10 +49,131 @@ static func get_tower_texture(tid: String, owner: int) -> ImageTexture:
 			_paint_frost_tower(img, accent, accent_hi, accent_dk)
 		"barracks":
 			_paint_barracks_tower(img, accent, accent_hi, accent_dk)
+	_cache[key] = img
+	return img
 
-	var tex := ImageTexture.create_from_image(img)
-	_cache[key] = tex
-	return tex
+
+const GOLD := Color(0.98, 0.80, 0.30)
+const GOLD_HI := Color(1.0, 0.95, 0.62)
+const INK := Color(0.08, 0.06, 0.10)
+
+
+static func _paint_lv2(img: Image, tid: String, accent: Color) -> void:
+	# gold trim band on the plinth + corner studs
+	for x in range(7, 25):
+		_px(img, x, 31, GOLD if x % 3 != 0 else GOLD_HI)
+	_px(img, 6, 32, GOLD_HI)
+	_px(img, 25, 32, GOLD_HI)
+	match tid:
+		"arrow":
+			for y in range(6, 13):
+				_px(img, 16, y, GOLD)
+			_rect_px(img, 14, 4, 4, 2, GOLD_HI)
+		"mage":
+			_rect_px(img, 8, 12, 2, 6, GOLD)
+			_rect_px(img, 22, 12, 2, 6, GOLD)
+			_px(img, 8, 11, GOLD_HI)
+			_px(img, 23, 11, GOLD_HI)
+		"frost":
+			for sx in [10, 22]:
+				for y in range(14, 22):
+					_px(img, sx, y, Color(0.80, 0.96, 1.0))
+				_px(img, sx, 13, Color.WHITE)
+		"barracks":
+			for mx in [4, 10, 16, 22]:
+				_rect_px(img, mx, 13, 5, 1, GOLD)
+			_rect_px(img, 6, 6, 1, 8, GOLD)
+			_rect_px(img, 7, 6, 5, 3, accent)
+
+
+static func _diamond(img: Image, cx: int, cy: int, r: int, light: Color, dark: Color, edge: Color) -> void:
+	for dy in range(-r, r + 1):
+		var w: int = r - absi(dy)
+		for dx in range(-w, w + 1):
+			var c := light if dx < 0 else dark
+			if absi(dx) == w:
+				c = edge
+			_px(img, cx + dx, cy + dy, c)
+
+
+static func _paint_branch(img: Image, branch: String, accent: Color) -> void:
+	match branch:
+		"sniper":
+			# needle spire + long ballista arms across the parapet + eagle crest
+			for y in range(0, 6):
+				_px(img, 15, y, INK)
+				_px(img, 16, y, GOLD if y > 0 else GOLD_HI)
+				_px(img, 17, y, INK)
+			for x in range(1, 31):
+				_px(img, x, 15, Color(0.30, 0.18, 0.08))
+				_px(img, x, 16, INK if x < 3 or x > 28 else Color(0.48, 0.30, 0.14))
+			for k in range(3):
+				_px(img, 1, 13 + k, INK)
+				_px(img, 30, 13 + k, INK)
+			_rect_px(img, 14, 21, 4, 3, GOLD)
+			_px(img, 13, 21, GOLD_HI)
+			_px(img, 18, 21, GOLD_HI)
+		"repeater":
+			# twin crossbow boxes on the parapet + bolt racks
+			for bx in [0, 26]:
+				_rect_px(img, bx, 13, 6, 6, accent.darkened(0.2))
+				_outline(img, bx, 13, 6, 6, INK)
+				for k in range(3):
+					_px(img, bx + 1 + k * 2, 15, Color(0.92, 0.92, 0.96))
+					_px(img, bx + 1 + k * 2, 16, Color(0.60, 0.40, 0.20))
+			_rect_px(img, 13, 3, 6, 2, GOLD)
+		"arcane":
+			_diamond(img, 16, 10, 7, Color(0.80, 0.90, 1.0), Color(0.45, 0.40, 1.0), Color(0.16, 0.10, 0.42))
+			_px(img, 14, 7, Color.WHITE)
+			_px(img, 14, 8, Color.WHITE)
+			_diamond(img, 4, 8, 2, Color(0.85, 0.75, 1.0), Color(0.55, 0.35, 0.95), Color(0.20, 0.10, 0.40))
+			_diamond(img, 27, 8, 2, Color(0.85, 0.75, 1.0), Color(0.55, 0.35, 0.95), Color(0.20, 0.10, 0.40))
+		"inferno":
+			_diamond(img, 16, 10, 6, Color(1.0, 0.92, 0.45), Color(1.0, 0.42, 0.12), Color(0.45, 0.10, 0.04))
+			_px(img, 15, 7, Color.WHITE)
+			_rect_px(img, 7, 29, 18, 2, Color(0.95, 0.45, 0.12))
+			for ex in [9, 13, 19, 23]:
+				_px(img, ex, 28, Color(1.0, 0.85, 0.30))
+		"glacier":
+			for y in range(0, 12):
+				var half: int = 1 + y / 3
+				for x in range(16 - half, 16 + half):
+					_px(img, x, y, Color(0.92, 1.0, 1.0) if x < 16 else Color(0.55, 0.85, 1.0))
+				_px(img, 16 - half - 1, y, Color(0.08, 0.20, 0.34))
+				_px(img, 16 + half, y, Color(0.08, 0.20, 0.34))
+			for sx in [4, 27]:
+				for y in range(12, 22):
+					_px(img, sx, y, Color(0.80, 0.96, 1.0))
+					_px(img, sx + 1, y, Color(0.45, 0.78, 0.98))
+		"blizzard":
+			var cx := 16
+			var cy := 5
+			for k in range(-4, 5):
+				_px(img, cx + k, cy, Color.WHITE)
+				_px(img, cx, cy + k, Color.WHITE)
+				_px(img, cx + k, cy + k, Color(0.70, 0.92, 1.0))
+				_px(img, cx + k, cy - k, Color(0.70, 0.92, 1.0))
+			for sx in [2, 28]:
+				for y in range(16, 26):
+					_px(img, sx, y, Color(0.70, 0.92, 1.0))
+					_px(img, sx + 1, y, Color(0.40, 0.70, 0.95))
+		"paladin":
+			for mx in [4, 10, 16, 22]:
+				_rect_px(img, mx, 13, 5, 4, GOLD)
+				_outline(img, mx, 13, 5, 4, INK)
+			_rect_px(img, 12, 17, 8, 7, Color(0.98, 0.96, 0.86))
+			_rect_px(img, 15, 18, 2, 5, GOLD)
+			_rect_px(img, 13, 20, 6, 1, GOLD)
+			_outline(img, 12, 17, 8, 7, GOLD)
+		"ranger":
+			for sx in range(3, 29, 3):
+				_rect_px(img, sx, 10, 2, 4, Color(0.50, 0.32, 0.16))
+				_px(img, sx, 9, INK)
+			_rect_px(img, 17, 6, 9, 5, Color(0.26, 0.58, 0.30))
+			_rect_px(img, 17, 6, 9, 1, Color(0.50, 0.80, 0.45))
+			for k in range(6):
+				_px(img, 13 + k, 18 + k, Color(0.62, 0.42, 0.20))
+				_px(img, 18 - k, 18 + k, Color(0.62, 0.42, 0.20))
 
 
 static func get_pad_texture(owner_hint: int) -> ImageTexture:

@@ -53,6 +53,16 @@ func _battle_states(n: int, sid: String) -> void:
 	await _shot("s%d_01_empty" % n)
 
 	var d: CoopTDDirector = scene.director
+	if n == 1:
+		# radial build menu on an empty pad, hovering the frost option
+		var seat = scene.seats[1]
+		scene._open_menu(seat, 0)
+		seat.menu.anim = 1.0
+		seat.menu.hover = 2
+		seat.cursor = seat.menu.option_pos(2)
+		await create_timer(0.2).timeout
+		await _shot("s1_01b_build_menu")
+		scene._close_menu(seat)
 	d.gold[1] = 99999
 	d.gold[2] = 99999
 	var types := ["arrow", "mage", "frost", "barracks"]
@@ -65,10 +75,27 @@ func _battle_states(n: int, sid: String) -> void:
 			d.execute_command({"player_id": pid, "action": "upgrade", "pad_id": str(pad["id"])})
 		if lv >= 2:
 			d.execute_command({"player_id": pid, "action": "upgrade", "pad_id": str(pad["id"]), "branch": i % 2})
-	if scene.has_method("_refresh_hud"):
-		scene._refresh_hud()
 	await create_timer(0.3).timeout
 	await _shot("s%d_02_towers" % n)
+	if n == 1:
+		# branch menu on a Lv2 tower owned by P1
+		var seat = scene.seats[1]
+		for i in range(d.pads.size()):
+			var t := d.get_tower_at_pad(str(d.pads[i]["id"]))
+			if not t.is_empty() and int(t["level"]) < 3 and int(d.tower_owners[str(t["uid"])]) == 1:
+				while int(t["level"]) < 2:
+					d.execute_command({"player_id": 1, "action": "upgrade", "pad_id": str(d.pads[i]["id"])})
+				scene._open_menu(seat, i)
+				seat.menu.anim = 1.0
+				seat.menu.hover = 0
+				break
+		await create_timer(0.2).timeout
+		await _shot("s1_02b_branch_menu")
+		scene._close_menu(seat)
+		scene.pause_menu.open()
+		await create_timer(0.2).timeout
+		await _shot("s1_02c_pause")
+		scene.pause_menu.close()
 
 	d.call_next_wave()
 	d.call_next_wave()

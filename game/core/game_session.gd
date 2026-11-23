@@ -17,6 +17,8 @@ var replay := ReplaySession.new()
 
 func _ready() -> void:
 	meta.load_from_disk()
+	GameSettings.load_settings()
+	GameSettings.apply(AudioManager)
 	net = NetSessionManager.new()
 	add_child(net)
 

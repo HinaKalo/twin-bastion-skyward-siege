@@ -6,9 +6,28 @@ const TEST_META := "user://_test_twin_bastion_meta.json"
 
 var _passed: int = 0
 var _failed: int = 0
+var _logger: _ErrorLogger
+
+
+## Captures engine/script errors so a runtime script error anywhere fails the suite.
+class _ErrorLogger extends Logger:
+	var errors: Array[String] = []
+	var _mutex := Mutex.new()
+
+	func _log_error(function: String, file: String, line: int, code: String, rationale: String, _editor_notify: bool, error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
+		if error_type == ERROR_TYPE_WARNING:
+			return
+		_mutex.lock()
+		errors.append("%s:%d %s %s %s" % [file, line, function, code, rationale])
+		_mutex.unlock()
+
+	func _log_message(_message: String, _error: bool) -> void:
+		pass
 
 
 func _init() -> void:
+	_logger = _ErrorLogger.new()
+	OS.add_logger(_logger)
 	call_deferred("_run_all")
 
 
@@ -67,9 +86,14 @@ func _run_all() -> void:
 	_test_ai()
 	_test_presentation()
 	await _test_scenes()
+	await _test_battle_flow()
 
 	var real_after := FileAccess.get_file_as_string(MetaProgress.META_PATH) if FileAccess.file_exists(MetaProgress.META_PATH) else "<none>"
 	_assert_eq(real_after, real_before, "Test suite leaves the real player save untouched")
+	var errs := _logger.errors.filter(func(e): return not str(e).contains("resources still in use") and not str(e).contains("ObjectDB"))
+	for e in errs.slice(0, 8):
+		printerr("[SCRIPT ERROR] " + str(e))
+	_assert_true(errs.is_empty(), "No script/engine errors during the run (%d)" % errs.size())
 
 	print("=== Results: %d passed, %d failed ===" % [_passed, _failed])
 	quit(0 if _failed == 0 else 1)
@@ -414,6 +438,133 @@ func _test_presentation() -> void:
 	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_1_twin_bridge"), "bridge", "Stage 1 maps to bridge biome")
 	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_2_rift_cross"), "rift", "Stage 2 maps to rift biome")
 	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_3_royal_siege"), "siege", "Stage 3 maps to siege biome")
+	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_4_frost_trail"), "snow", "Stage 4 maps to snow biome")
+	_assert_eq(TowerArtRenderer.get_biome_for_stage("stage_5_abyss_corridor"), "abyss", "Stage 5 maps to abyss biome")
+	for s in CampaignData.get_stages():
+		var t0 := Time.get_ticks_msec()
+		var baked := TerrainBaker._bake(s, TowerArtRenderer.get_biome_for_stage(str(s["id"])))
+		var ms := Time.get_ticks_msec() - t0
+		print("  terrain bake %s: %d ms" % [s["id"], ms])
+		_assert_true(baked["tex"] != null and ms < 2500, "Terrain bake for %s is fast enough (%d ms)" % [s["id"], ms])
+	for eid in CreepCatalog.ROSTER.keys():
+		_assert_true(PixelCreepSprites.SPRITES.has(eid), "Every enemy has pixel art (%s)" % eid)
+	for tid in TowerCatalog.TOWER_IDS:
+		for b in ["", "sniper", "repeater", "arcane", "inferno", "glacier", "blizzard", "paladin", "ranger"]:
+			_assert_true(PixelTowerSprites.get_tower_texture(tid, 1, 3 if b != "" else 1, b) != null, "Tower art %s/%s" % [tid, b])
+
+
+func _key(code: Key, location: KeyLocation = KEY_LOCATION_UNSPECIFIED) -> InputEventKey:
+	var k := InputEventKey.new()
+	k.keycode = code
+	k.location = location
+	k.pressed = true
+	return k
+
+
+## Drives the real battle-scene input paths (no mouse needed): seat menus, P2 keyboard, HUD actions, pause, result.
+func _test_battle_flow() -> void:
+	var gs: Node = root.get_node("GameSession")
+	var saved_meta: MetaProgress = gs.meta
+	var test_meta := _new_meta()
+	test_meta.tutorial_done = true
+	gs.meta = test_meta
+	gs.play_mode = 1 # LOCAL_2P
+	gs.selected_stage_id = "stage_1_twin_bridge"
+	gs.difficulty = "normal"
+	gs.endless_mode = false
+	var scene: Node2D = (ResourceLoader.load("res://game/scenes/coop_battle.tscn") as PackedScene).instantiate()
+	root.add_child(scene)
+	await process_frame
+	var d: CoopTDDirector = scene.director
+	var s1 = scene.seats[1]
+	var s2 = scene.seats[2]
+	_assert_true(s1.uses_mouse and s2.keyboard, "Local 2P: P1 on mouse, P2 on keyboard")
+
+	# P1: confirm on pad 0 opens the build ring, choosing option 0 builds an arrow tower
+	s1.cursor = d.pads[0]["pos"]
+	scene._update_hover(s1)
+	scene._seat_confirm(s1, true)
+	_assert_true(s1.menu != null and s1.menu.options.size() == 4, "P1 click on an empty pad opens a 4-tower ring")
+	s1.cursor = s1.menu.option_pos(0)
+	scene._seat_confirm(s1, true)
+	_assert_true(d.pad_to_tower_uid.has(str(d.pads[0]["id"])), "Choosing a ring option builds the tower")
+	_assert_true(s1.menu == null, "Ring closes after building")
+
+	# P1: open the tower ring and sell with a confirm step
+	s1.cursor = d.pads[0]["pos"]
+	scene._update_hover(s1)
+	scene._seat_confirm(s1, true)
+	var sell_idx := -1
+	for i in range(s1.menu.options.size()):
+		if str(s1.menu.options[i]["kind"]) == "sell":
+			sell_idx = i
+	_assert_true(sell_idx >= 0, "Own tower ring offers selling")
+	scene._activate_option(s1, sell_idx)
+	_assert_true(d.pad_to_tower_uid.has(str(d.pads[0]["id"])), "First sell click only asks for confirmation")
+	scene._activate_option(s1, sell_idx)
+	_assert_true(not d.pad_to_tower_uid.has(str(d.pads[0]["id"])), "Second sell click sells the tower")
+
+	# P2 keyboard: move the cursor onto a P2 pad, Enter opens the ring, arrow picks, Enter builds
+	var p2_pad := -1
+	for i in range(d.pads.size()):
+		if int(d.pads[i]["owner_hint"]) == 2:
+			p2_pad = i
+			break
+	s2.cursor = d.pads[p2_pad]["pos"]
+	scene._update_hover(s2)
+	scene._handle_key(_key(KEY_ENTER))
+	_assert_true(s2.menu != null, "P2 Enter opens the ring on the hovered pad")
+	s2.menu.move_selection(Vector2(1, 1))
+	var picked: String = str(s2.menu.get_hovered().get("tower_id", ""))
+	scene._handle_key(_key(KEY_ENTER))
+	var t2 := d.get_tower_at_pad(str(d.pads[p2_pad]["id"]))
+	_assert_true(not t2.is_empty() and str(t2["tower_id"]) == picked and int(d.tower_owners[str(t2["uid"])]) == 2, "P2 keyboard builds the selected tower as P2")
+	scene._handle_key(_key(KEY_SHIFT, KEY_LOCATION_RIGHT))
+
+	# barracks rally flow (P2): build barracks, choose rally, confirm on the road
+	var bpad := -1
+	for i in range(d.pads.size()):
+		if not d.pad_to_tower_uid.has(str(d.pads[i]["id"])):
+			bpad = i
+			break
+	d.execute_command({"player_id": 2, "action": "build_or_upgrade", "pad_id": str(d.pads[bpad]["id"]), "tower_id": "barracks"})
+	scene._open_menu(s2, bpad)
+	var rally_idx := -1
+	for i in range(s2.menu.options.size()):
+		if str(s2.menu.options[i]["kind"]) == "rally":
+			rally_idx = i
+	scene._activate_option(s2, rally_idx)
+	_assert_eq(s2.targeting, "rally", "Rally option enters targeting mode")
+	s2.cursor = d.pads[bpad]["rally"]
+	scene._seat_confirm(s2, false)
+	_assert_eq(s2.targeting, "", "Confirming on the road sets the rally point")
+
+	# HUD actions
+	scene._on_hud_action("call_wave")
+	_assert_eq(d.wave_dir.current_wave_index, 0, "HUD call-wave button starts wave 1")
+	var speed_before: float = scene._speed_mult
+	scene._on_hud_action("speed")
+	_assert_true(scene._speed_mult > speed_before, "HUD speed button speeds the game up")
+	scene._on_hud_action("p1_skill")
+	_assert_eq(s1.targeting, "skill", "HUD skill button enters skill targeting")
+	scene._seat_cancel(s1)
+
+	# pause & resume
+	scene._open_pause()
+	_assert_true(scene.pause_menu.visible and paused, "Pause menu opens and pauses the tree")
+	scene.pause_menu.close()
+	_assert_true(not paused, "Closing the pause menu resumes")
+
+	# finish -> result screen (records into the scratch meta only)
+	for i in range(30):
+		await process_frame
+	scene._finish_stage(true)
+	_assert_true(scene.result_screen.visible, "Result screen appears on victory")
+	_assert_true(test_meta.get_stage_stars("stage_1_twin_bridge") > 0, "Victory records stars")
+	scene.queue_free()
+	await process_frame
+	gs.meta = saved_meta
+	gs.play_mode = 0
 
 
 func _test_scenes() -> void:
@@ -426,6 +577,8 @@ func _test_scenes() -> void:
 		_assert_true(ps != null, "Load scene: %s" % spath)
 		if ps != null:
 			var inst := ps.instantiate()
+			var scr: Script = inst.get_script()
+			_assert_true(scr != null and scr.can_instantiate(), "Scene script compiles: %s" % spath)
 			root.add_child(inst)
 			for i in range(3):
 				await process_frame

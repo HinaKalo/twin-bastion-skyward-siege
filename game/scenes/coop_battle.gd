@@ -1,82 +1,268 @@
 extends Node2D
-## 《双子堡垒：共守苍穹》 — Commercial-Grade 2-Player Co-op Pixel Tower Defense Battlefield
-## Features:
-## - 3 Distinct Animated Biomes (Emerald River & Bridges / Arcane Rift Highlands / Royal Siege Courtyard)
-## - Multi-Tier Pixel-Art Tower Architecture (Lv1..Lv3) + Owner Heraldry + Glowing Cross-Player Combo Lines
-## - Full Combat Juice via BattleVFX (Ballistic Arrows, Arcane Orbs, Frost Shards, Chain Lightning,
-##   Floating Damage/Gold Numbers, Hit-Flash, Build Dust, Shockwaves, Trauma Screen Shake)
-## - Dramatic Cinematics (Stage Intro Curtain, Wave Slide-In Banner, Boss Warning Cut-In,
-##   and Full-Screen Twin-Star Comet Barrage Synchro Ultimate!)
-## - Contextual Tower Inspector Card (Range Ring Preview, Lv, DPS, Upgrade/Sell `[X]`)
+## 《双子堡垒：共守苍穹》 — 2-player co-op pixel tower defense battlefield.
+## - Two seats (P1 / P2), each with its own cursor and radial build menu. Seats can be driven by the mouse,
+##   the right-hand keyboard cluster (P2), a gamepad, the AI partner, or a LAN peer.
+## - Every action becomes a director command (`_dispatch_cmd`), so local, AI and LAN play share one path.
+## - World rendering is depth-sorted (towers, soldiers, heroes, creeps), with BattleVFX juice and cinematics.
 
 const RETRO_DIR := "res://content/packs/jrpg_retro/"
+const PLAY_TOP := 22.0
+const PLAY_BOTTOM := 248.0
+const CURSOR_SPEED := 160.0
+const STICK_DEADZONE := 0.25
+
+const TUTORIAL: Array[Dictionary] = [
+	{"text": "教程 1/5：点击发光的塔位，在环形菜单中选择一座防御塔", "goal": "build", "hud": ""},
+	{"text": "教程 2/5：点击下方【开战】或按 Space 召唤第一波敌人", "goal": "wave", "hud": "call_wave"},
+	{"text": "教程 3/5：右键点击道路，让英雄前去拦截敌人", "goal": "rally", "hud": ""},
+	{"text": "教程 4/5：敌人聚集时按 Q（或点技能按钮）释放【陨星箭雨】", "goal": "skill", "hud": "p1_skill"},
+	{"text": "教程 5/5：再次点击你的塔进行升级 —— 与搭档的塔相邻还能触发连携！", "goal": "upgrade", "hud": ""},
+]
+
+const TIPS: Array[String] = [
+	"提示：P1 与 P2 的塔相邻会形成连携，不同塔种组合效果不同",
+	"提示：寒冰+法师 = 冰火超载；箭塔+兵营 = 箭兵破甲",
+	"提示：铁壁盾卫的护盾会被魔法击碎，物理攻击几乎无效",
+	"提示：倒计时期间提前召唤波次，双方都能拿到额外金币",
+	"提示：双星能量满后，两人都按下合体键才能释放【苍穹双星陨落】",
+	"提示：点击兵营可设置集结点，把卫兵部署到关键路口",
+	"提示：萨满会治疗附近敌人，用狙击塔优先击杀",
+	"提示：金币不够时，可以向搭档支援 50G",
+]
+
+
+class Seat:
+	var pid: int = 1
+	var human: bool = true
+	var remote: bool = false
+	var uses_mouse: bool = false
+	var keyboard: bool = false
+	var joy: int = -1
+	var pad_active: bool = false
+	var cursor: Vector2 = Vector2(240, 136)
+	var hover_pad: int = -1
+	var menu: RadialMenu = null
+	var targeting: String = ""
+	var rally_pad: String = ""
+	var stick_latch: bool = false
+
 
 var director := CoopTDDirector.new()
-var ai_partner := CoopAIPartner.new(2)
+var ai_partner: CoopAIPartner = null
 var vfx := BattleVFX.new()
-var ai_enabled: bool = true
 var biome: String = "bridge"
+var ai_enabled: bool = false
+var seats: Dictionary = {}
 
-var _tower_types: Array[String] = ["arrow", "mage", "frost", "barracks"]
-var _p1_tower: String = "arrow"
-var _p2_tower: String = "barracks"
-var _p1_pad_idx: int = 0
-var _p2_pad_idx: int = 4
+var hud: BattleHUD
+var pause_menu: PauseMenu
+var result_screen: ResultScreen
 
 var _speed_mult: float = 1.0
-var _is_paused: bool = false
 var _is_finished: bool = false
 var _flow_t: float = 0.0
 var _banner_ttl: float = 0.0
-var _tutorial_step: int = 0 # 0=P1 build tower, 1=call wave 1, 2=done
-
-var _hit_flash: Dictionary = {} # creep_uid -> float
+var _hit_flash: Dictionary = {}
 var _tex_cache: Dictionary = {}
-
-var _hud_top: Label
-var _guide_banner: Label
-var _guide_beacon: ObjectiveBeacon2D
-var _tower_btns: Dictionary = {}
-var _ult_btn: Button
-var _ai_btn: Button
-var _speed_btn: Button
-var _wave_btn: Button
-var _result_panel: StageResultPanel
+var _fire_sfx_cd: float = 0.0
+var _kill_sfx_cd: float = 0.0
+var _boss_music: bool = false
+var _tutorial_step: int = -1
+var _tip_t: float = 0.0
+var _tip_idx: int = 0
 
 
 func _ready() -> void:
-	ai_enabled = GameSession.is_ai_partner_enabled()
 	var stage := CampaignData.get_stage_by_id(GameSession.selected_stage_id)
 	biome = TowerArtRenderer.get_biome_for_stage(str(stage["id"]))
-	vfx.init_ambient_motes(biome, 24)
 	director.setup_stage(stage, GameSession.meta, GameSession.difficulty, GameSession.endless_mode)
+	_setup_seats()
+	Input.joy_connection_changed.connect(_on_joy_changed)
+	_connect_signals()
 
-	# Wire rich VFX & Cinematic callbacks!
+	hud = BattleHUD.new()
+	hud.director = director
+	hud.ai_seat = 2 if ai_enabled else 0
+	hud.local_seats = _local_seat_ids()
+	hud.portraits = {1: UnitArtRenderer.get_portrait(1), 2: UnitArtRenderer.get_portrait(2)}
+	hud.action.connect(_on_hud_action)
+	add_child(hud)
+	pause_menu = PauseMenu.new()
+	pause_menu.restart_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn"))
+	pause_menu.map_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/campaign_map.tscn"))
+	add_child(pause_menu)
+	result_screen = ResultScreen.new()
+	result_screen.replay_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn"))
+	result_screen.map_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/campaign_map.tscn"))
+	result_screen.next_requested.connect(_go_next_stage)
+	add_child(result_screen)
+
+	vfx.init_ambient_motes(biome, 24)
+	vfx.play_stage_intro(str(stage["name"]), str(stage["subtitle"]))
+	MoonRPG.play_bgm("bgm.forest")
+	if str(stage["id"]) == "stage_1_twin_bridge" and not GameSession.meta.tutorial_done and not _is_lan() and not director.endless:
+		_tutorial_step = 0
+	_refresh_hud_keys()
+
+
+func _exit_tree() -> void:
+	if GameSession.net != null and GameSession.net.command_received.is_connected(_on_net_command):
+		GameSession.net.command_received.disconnect(_on_net_command)
+	if Input.joy_connection_changed.is_connected(_on_joy_changed):
+		Input.joy_connection_changed.disconnect(_on_joy_changed)
+
+
+# ================================================================== seats
+
+func _setup_seats() -> void:
+	var s1 := Seat.new()
+	s1.pid = 1
+	s1.cursor = Vector2(200, 100)
+	var s2 := Seat.new()
+	s2.pid = 2
+	s2.cursor = Vector2(200, 180)
+	match GameSession.play_mode:
+		GameSession.PlayMode.SOLO_AI:
+			s1.uses_mouse = true
+			s2.human = false
+			ai_enabled = true
+			ai_partner = CoopAIPartner.new(2)
+		GameSession.PlayMode.LOCAL_2P:
+			s1.uses_mouse = true
+			s2.keyboard = true
+		GameSession.PlayMode.LAN_HOST:
+			s1.uses_mouse = true
+			s2.human = false
+			s2.remote = true
+		GameSession.PlayMode.LAN_CLIENT:
+			s2.uses_mouse = true
+			s1.human = false
+			s1.remote = true
+	seats = {1: s1, 2: s2}
+	_assign_joypads()
+
+
+func _assign_joypads() -> void:
+	var pads := Input.get_connected_joypads()
+	for pid in seats.keys():
+		(seats[pid] as Seat).joy = -1
+	var humans: Array[Seat] = []
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if s.human and not s.remote:
+			humans.append(s)
+	if humans.size() == 1:
+		if pads.size() >= 1:
+			humans[0].joy = pads[0]
+	elif humans.size() == 2:
+		if pads.size() >= 2:
+			humans[0].joy = pads[0]
+			humans[1].joy = pads[1]
+		elif pads.size() == 1:
+			humans[1].joy = pads[0] # P1 keeps the mouse, P2 gets the only pad
+
+
+func _on_joy_changed(_device: int, _connected: bool) -> void:
+	_assign_joypads()
+	_refresh_hud_keys()
+
+
+func _local_seat_ids() -> Array[int]:
+	var out: Array[int] = []
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if s.human and not s.remote:
+			out.append(pid)
+	return out
+
+
+func _refresh_hud_keys() -> void:
+	if hud == null:
+		return
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if s.joy >= 0 and (s.pad_active or not (s.uses_mouse or s.keyboard)):
+			hud.keys[pid] = {"skill": "X", "gift": "LB", "ult": "Y"}
+		elif pid == 1 or s.uses_mouse:
+			hud.keys[pid] = {"skill": "Q", "gift": "T", "ult": "R"}
+		else:
+			hud.keys[pid] = {"skill": "/", "gift": ",", "ult": "RC"}
+
+
+func _is_lan() -> bool:
+	return GameSession.play_mode == GameSession.PlayMode.LAN_HOST or GameSession.play_mode == GameSession.PlayMode.LAN_CLIENT
+
+
+# ================================================================== signals / feedback
+
+func _connect_signals() -> void:
 	director.banner_event.connect(_show_banner)
-	director.gold_transferred.connect(func(_fp: int, _tp: int, amt: int, bonus: int):
-		vfx.spawn_float_text(Vector2(240, 120), "💰 +%dG!" % (amt + bonus), Color(1.0, 0.94, 0.32), 9)
-		vfx.spawn_burst(Vector2(240, 120), Color(1.0, 0.90, 0.30), 12, 70.0, 45.0)
+	director.gold_transferred.connect(func(fp: int, tp: int, amt: int, bonus: int):
+		var target := Vector2(70, 26) if tp == 1 else Vector2(410, 26)
+		vfx.spawn_float_text(target + Vector2(0, 14), "+%dG" % (amt + bonus), UIKit.GOLD, 8)
+		vfx.spawn_burst(target + Vector2(0, 16), UIKit.GOLD, 10, 50.0, 40.0)
+		MoonRPG.play_sfx("sfx.collect")
+		if fp == 2 and ai_enabled:
+			_show_banner("AI 搭档向你支援了 %dG" % (amt + bonus), UIKit.GOLD)
+	)
+	director.synchro_requested.connect(func(by: int):
+		MoonRPG.play_sfx("sfx.checkpoint")
+		if ai_enabled and by == 2:
+			_show_banner("AI 搭档请求【双星合体】！按 %s 响应！" % str(hud.keys[1]["ult"]), Color(1.0, 0.94, 0.3))
 	)
 	director.synchro_unleashed.connect(func(_h: int):
 		vfx.play_synchro_ultimate_cinematic()
 		MoonRPG.play_sfx("sfx.quest_clear")
 	)
+	director.hero_skill_cast.connect(_on_hero_skill_cast)
+	director.creep_ability.connect(_on_creep_ability)
+	director.combo_proc.connect(func(_k: String, pos: Vector2, col: Color):
+		vfx.spawn_burst(pos, col, 4, 30.0, 0.0)
+	)
+	director.tower_built.connect(func(pid: int, _pad: String, t: Dictionary):
+		var p: Vector2 = t["pos"]
+		vfx.spawn_burst(p + Vector2(0, 6), Color(0.85, 0.75, 0.55), 12, 55.0, 30.0)
+		vfx.spawn_shockwave(p + Vector2(0, 6), 22.0, UIKit.pcol(pid), 0.28)
+		MoonRPG.play_sfx("sfx.land", -6.0)
+		_tutorial_goal("build")
+	)
+	director.tower_upgraded.connect(func(pid: int, _pad: String, t: Dictionary):
+		var p: Vector2 = t["pos"]
+		vfx.spawn_burst(p - Vector2(0, 8), UIKit.GOLD, 16, 60.0, 20.0)
+		vfx.spawn_shockwave(p, 26.0, UIKit.GOLD, 0.35)
+		vfx.spawn_float_text(p - Vector2(0, 26), "%s Lv%d" % [str(t["name"]), int(t["level"])], UIKit.pcol(pid), 7)
+		MoonRPG.play_sfx("sfx.checkpoint", -6.0)
+		_tutorial_goal("upgrade")
+	)
+	director.tower_sold.connect(func(_pid: int, pad_id: String, refund: int):
+		var pad := director._find_pad(pad_id)
+		if not pad.is_empty():
+			vfx.spawn_float_text(pad["pos"], "+%dG" % refund, UIKit.GOLD, 8)
+			vfx.spawn_burst(pad["pos"], Color(0.7, 0.6, 0.5), 10, 45.0, 40.0)
+		MoonRPG.play_sfx("sfx.collect")
+	)
+	director.wave_called.connect(func(_wi: int, _bonus: int): _tutorial_goal("wave"))
 	director.wave_dir.wave_started.connect(func(_wi: int, wname: String):
 		vfx.play_wave_banner(wname)
+		MoonRPG.play_sfx("sfx.door", -6.0)
 	)
 	director.wave_dir.enemy_spawn_requested.connect(func(eid: String, _lid: String, _wi: int):
 		if CreepCatalog.is_boss(eid):
 			var bdef := CreepCatalog.get_def(eid)
-			vfx.play_boss_cutin(str(bdef["name"]), str(bdef.get("cutin_sub", "")), _retro_tex("boss_obsidian_clean.png" if eid.begins_with("boss_obsidian") else ("enemy_boss_golem.png" if eid == "boss_frost_colossus" else "enemy_goblin.png")))
+			vfx.play_boss_cutin(str(bdef["name"]), str(bdef.get("cutin_sub", "")), _creep_texture(eid))
 			MoonRPG.play_sfx("sfx.hurt")
 	)
 	director.engine.tower_fired.connect(func(t: Dictionary, tgt: Dictionary, dmg: float):
 		var tid := str(t["tower_id"])
-		vfx.spawn_projectile(t["pos"] as Vector2, tgt["pos"] as Vector2, tid)
-		var cuid := str(tgt.get("uid", ""))
-		_hit_flash[cuid] = 0.12
-		var dcol := Color(0.76, 0.96, 1.0) if tid == "frost" else (Color(0.95, 0.65, 1.0) if tid == "mage" else Color(1.0, 0.96, 0.72))
-		vfx.spawn_float_text(tgt["pos"] as Vector2, "-%d" % int(round(dmg)), dcol, 7)
+		vfx.spawn_projectile(t["pos"] as Vector2 - Vector2(0, 14), tgt["pos"] as Vector2, tid, str(t.get("branch", "")))
+		_hit_flash[str(tgt.get("uid", ""))] = 0.12
+		t["fire_anim"] = 0.18
+		if GameSettings.damage_numbers:
+			var dcol := Color(0.76, 0.96, 1.0) if tid == "frost" else (Color(0.95, 0.65, 1.0) if tid == "mage" else Color(1.0, 0.96, 0.72))
+			vfx.spawn_float_text(tgt["pos"] as Vector2, str(int(round(dmg))), dcol, 6)
+		if _fire_sfx_cd <= 0.0:
+			_fire_sfx_cd = 0.07
+			AudioManager.play_sfx("sfx.magic" if tid != "arrow" else "sfx.swing_light", -16.0, 0.12)
 	)
 	director.engine.chain_lightning_fired.connect(func(pts: Array):
 		for i in range(pts.size() - 1):
@@ -84,189 +270,81 @@ func _ready() -> void:
 	)
 	director.engine.creep_killed.connect(func(creep: Dictionary, bounty: int):
 		var cp: Vector2 = creep["pos"]
-		var is_boss := str(creep.get("enemy_id", "")).begins_with("boss")
-		vfx.spawn_burst(cp, Color(1.0, 0.55, 0.35) if is_boss else Color(0.95, 0.85, 0.40), 22 if is_boss else 10, 95.0 if is_boss else 55.0, 45.0)
+		var is_boss := bool(creep.get("is_boss", false))
+		vfx.spawn_burst(cp, Color(1.0, 0.55, 0.35) if is_boss else Color(0.95, 0.85, 0.40), 22 if is_boss else 8, 95.0 if is_boss else 50.0, 45.0)
+		vfx.spawn_death(cp + (Vector2(0, -10) if bool(creep["is_flying"]) else Vector2.ZERO), _creep_texture(str(creep["enemy_id"])), UnitArtRenderer.creep_draw_size(str(creep["enemy_id"])))
 		if is_boss:
-			vfx.spawn_shockwave(cp, 44.0, Color(1.0, 0.86, 0.35), 0.45)
-			vfx.add_shake(0.65)
-		vfx.spawn_float_text(cp + Vector2(0, -8), "+%dG" % bounty, Color(1.0, 0.92, 0.32), 8 if is_boss else 7)
+			vfx.spawn_shockwave(cp, 44.0, UIKit.GOLD, 0.45)
+			_shake(0.65)
+		var share := maxi(1, int(ceil(float(bounty) * CoopTDDirector.tuning_bounty_share)))
+		vfx.spawn_float_text(cp + Vector2(0, -8), "+%dG" % share, UIKit.GOLD, 7)
+		if _kill_sfx_cd <= 0.0:
+			_kill_sfx_cd = 0.08
+			AudioManager.play_sfx("sfx.hit", -10.0, 0.15)
 	)
-	director.engine.lives_changed.connect(func(rem: int):
-		vfx.add_shake(0.45)
-		vfx.spawn_float_text(Vector2(422, 118), "城防受击!", Color(1.0, 0.28, 0.28), 8)
-		if rem <= 0:
-			_finish_stage(false)
+	director.engine.creep_leaked.connect(func(_c: Dictionary, cost: int):
+		_shake(0.45)
+		vfx.spawn_float_text(Vector2(430, 120), "-%d 城防" % cost, UIKit.BAD, 8)
+		MoonRPG.play_sfx("sfx.hurt", -4.0)
 	)
 	if GameSession.net != null and not GameSession.net.command_received.is_connected(_on_net_command):
 		GameSession.net.command_received.connect(_on_net_command)
 
-	_p1_pad_idx = 0
-	_p2_pad_idx = mini(director.pads.size() - 1, 4)
 
-	_build_ui()
-	_guide_beacon = ObjectiveBeacon2D.new()
-	_guide_beacon.pad_size = Vector2(30, 30)
-	_guide_beacon.badge_y_offset = -24.0
-	add_child(_guide_beacon)
-	_update_guide()
-	vfx.play_stage_intro(str(stage["name"]), str(stage["subtitle"]))
-	MoonRPG.play_bgm("bgm.forest")
-	_refresh_hud()
-
-
-func _exit_tree() -> void:
-	if GameSession.net != null and GameSession.net.command_received.is_connected(_on_net_command):
-		GameSession.net.command_received.disconnect(_on_net_command)
-
-
-func _retro_tex(fname: String) -> Texture2D:
-	if _tex_cache.has(fname):
-		return _tex_cache[fname]
-	var full := RETRO_DIR + fname
-	var tex: Texture2D = load(full) if ResourceLoader.exists(full) else null
-	_tex_cache[fname] = tex
-	return tex
-
-
-func _build_ui() -> void:
-	var layer := CanvasLayer.new()
-	add_child(layer)
-
-	var top_bg := ColorRect.new()
-	top_bg.size = Vector2(480, 28)
-	top_bg.color = Color(0.05, 0.08, 0.18, 0.95)
-	layer.add_child(top_bg)
-	var sep := ColorRect.new()
-	sep.position = Vector2(0, 27)
-	sep.size = Vector2(480, 1.5)
-	sep.color = Color(0.90, 0.78, 0.42, 0.92)
-	layer.add_child(sep)
-
-	_hud_top = Label.new()
-	_hud_top.position = Vector2(10, 2)
-	_hud_top.custom_minimum_size = Vector2(460, 24)
-	_hud_top.add_theme_font_size_override("font_size", 8)
-	layer.add_child(_hud_top)
-
-	# Guide / Event Pill (strictly click-through)
-	var guide_bg := ColorRect.new()
-	guide_bg.position = Vector2(14, 30)
-	guide_bg.size = Vector2(452, 16)
-	guide_bg.color = Color(0.05, 0.07, 0.14, 0.80)
-	guide_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(guide_bg)
-
-	_guide_banner = Label.new()
-	_guide_banner.position = Vector2(18, 31)
-	_guide_banner.custom_minimum_size = Vector2(444, 14)
-	_guide_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_guide_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_guide_banner.add_theme_font_size_override("font_size", 7)
-	_guide_banner.add_theme_color_override("font_color", Color(1.0, 0.94, 0.30))
-	_guide_banner.add_theme_constant_override("outline_size", 2)
-	_guide_banner.add_theme_color_override("font_outline_color", Color(0.06, 0.04, 0.02))
-	layer.add_child(_guide_banner)
-
-	# Bottom Command Dock (Styled Fantasy Bevel Bar)
-	var bot_bg := ColorRect.new()
-	bot_bg.position = Vector2(0, 238)
-	bot_bg.size = Vector2(480, 32)
-	bot_bg.color = Color(0.05, 0.08, 0.18, 0.96)
-	layer.add_child(bot_bg)
-	var bot_sep := ColorRect.new()
-	bot_sep.position = Vector2(0, 238)
-	bot_sep.size = Vector2(480, 1.5)
-	bot_sep.color = Color(0.90, 0.78, 0.42, 0.88)
-	layer.add_child(bot_sep)
-
-	var row := HBoxContainer.new()
-	row.position = Vector2(8, 243)
-	row.add_theme_constant_override("separation", 3)
-	layer.add_child(row)
-
-	for pair in [["arrow", "1箭", Color(0.45, 0.62, 0.28)], ["mage", "2法", Color(0.55, 0.30, 0.82)], ["frost", "3冰", Color(0.24, 0.62, 0.86)], ["barracks", "4兵", Color(0.76, 0.56, 0.24)]]:
-		var b := Button.new()
-		b.text = "%s%d" % [pair[1], director.get_tower_cost(pair[0])]
-		b.focus_mode = Control.FOCUS_NONE
-		b.add_theme_font_size_override("font_size", 7)
-		TowerArtRenderer.style_button(b, pair[2])
-		var tid: String = pair[0]
-		b.pressed.connect(func(): _p1_tower = tid; _refresh_hud())
-		row.add_child(b)
-		_tower_btns[tid] = b
-
-	var b_gold := Button.new()
-	b_gold.text = "💰转50G"
-	b_gold.focus_mode = Control.FOCUS_NONE
-	b_gold.add_theme_font_size_override("font_size", 7)
-	TowerArtRenderer.style_button(b_gold, Color(0.76, 0.62, 0.18))
-	b_gold.pressed.connect(func(): _dispatch_cmd({"player_id": GameSession.local_player_id, "action": "transfer_gold", "amount": 50}))
-	row.add_child(b_gold)
-
-	_ult_btn = Button.new()
-	_ult_btn.text = "☄双星0%"
-	_ult_btn.focus_mode = Control.FOCUS_NONE
-	_ult_btn.add_theme_font_size_override("font_size", 7)
-	TowerArtRenderer.style_button(_ult_btn, Color(0.72, 0.24, 0.68))
-	_ult_btn.pressed.connect(func(): _dispatch_cmd({"player_id": GameSession.local_player_id, "action": "synchro_ult"}))
-	row.add_child(_ult_btn)
-
-	_ai_btn = Button.new()
-	_ai_btn.text = "AI:开" if ai_enabled else "AI:关"
-	_ai_btn.focus_mode = Control.FOCUS_NONE
-	_ai_btn.add_theme_font_size_override("font_size", 7)
-	TowerArtRenderer.style_button(_ai_btn, Color(0.26, 0.44, 0.64))
-	_ai_btn.pressed.connect(func():
-		ai_enabled = not ai_enabled
-		_ai_btn.text = "AI:开" if ai_enabled else "AI:关"
-	)
-	row.add_child(_ai_btn)
-
-	_speed_btn = Button.new()
-	_speed_btn.text = "1x"
-	_speed_btn.focus_mode = Control.FOCUS_NONE
-	_speed_btn.add_theme_font_size_override("font_size", 7)
-	TowerArtRenderer.style_button(_speed_btn, Color(0.32, 0.42, 0.56))
-	_speed_btn.pressed.connect(_cycle_speed)
-	row.add_child(_speed_btn)
-
-	_wave_btn = Button.new()
-	_wave_btn.text = "▶召波"
-	_wave_btn.focus_mode = Control.FOCUS_NONE
-	_wave_btn.add_theme_font_size_override("font_size", 7)
-	TowerArtRenderer.style_button(_wave_btn, Color(0.78, 0.30, 0.22))
-	_wave_btn.pressed.connect(func(): _dispatch_cmd({"player_id": GameSession.local_player_id, "action": "call_wave"}))
-	row.add_child(_wave_btn)
-
-	var b_map := Button.new()
-	b_map.text = "地图"
-	b_map.focus_mode = Control.FOCUS_NONE
-	b_map.add_theme_font_size_override("font_size", 7)
-	TowerArtRenderer.style_button(b_map, Color(0.28, 0.34, 0.48))
-	b_map.pressed.connect(func(): get_tree().change_scene_to_file("res://game/scenes/campaign_map.tscn"))
-	row.add_child(b_map)
-
-	_result_panel = StageResultPanel.new()
-	_result_panel.replay_requested.connect(func(): get_tree().reload_current_scene())
-	_result_panel.continue_requested.connect(func(): get_tree().change_scene_to_file("res://game/scenes/campaign_map.tscn"))
-	add_child(_result_panel)
-
-
-func _cycle_speed() -> void:
-	if _is_paused:
-		_is_paused = false
-		_speed_mult = 1.0
-	elif _speed_mult < 1.5:
-		_speed_mult = 2.0
+func _on_hero_skill_cast(pid: int, _skill: String, pos: Vector2, _hits: int) -> void:
+	if pid == 1:
+		vfx.play_meteor_volley(pos)
+		MoonRPG.play_sfx("sfx.magic", -2.0)
 	else:
-		_is_paused = true
-	_speed_btn.text = "暂停" if _is_paused else ("2x" if _speed_mult > 1.5 else "1x")
+		vfx.spawn_shockwave(pos, 28.0, UIKit.GOLD, 0.4)
+		vfx.spawn_burst(pos, Color(1.0, 0.95, 0.70), 16, 60.0, -10.0)
+		vfx.spawn_float_text(pos - Vector2(0, 14), "圣盾援军!", UIKit.P2, 7)
+		MoonRPG.play_sfx("sfx.block", -2.0)
+	_tutorial_goal("skill")
 
+
+func _on_creep_ability(_c: Dictionary, ability: String, pos: Vector2) -> void:
+	match ability:
+		"heal":
+			vfx.spawn_shockwave(pos, 50.0, Color(0.45, 1.0, 0.55), 0.45)
+			vfx.spawn_burst(pos, Color(0.5, 1.0, 0.6), 6, 25.0, -30.0)
+		"war_cry":
+			vfx.spawn_shockwave(pos, 64.0, Color(1.0, 0.35, 0.25), 0.5)
+			vfx.spawn_float_text(pos - Vector2(0, 22), "战吼!", UIKit.BAD, 8)
+			_shake(0.25)
+		"frost_roar":
+			vfx.spawn_shockwave(pos, 96.0, Color(0.6, 0.9, 1.0), 0.6)
+			vfx.spawn_float_text(pos - Vector2(0, 26), "寒霜咆哮!", Color(0.7, 0.95, 1.0), 8)
+			_shake(0.45)
+			MoonRPG.play_sfx("sfx.block", -4.0)
+		"summon":
+			vfx.spawn_shockwave(pos, 56.0, Color(0.75, 0.35, 1.0), 0.6)
+			vfx.spawn_burst(pos, Color(0.6, 0.3, 0.9), 20, 80.0, 0.0)
+			_shake(0.55)
+			MoonRPG.play_sfx("sfx.door", -2.0)
+		"split":
+			vfx.spawn_burst(pos, Color(0.55, 0.95, 0.45), 10, 45.0, 30.0)
+
+
+func _shake(amount: float) -> void:
+	if GameSettings.screen_shake:
+		vfx.add_shake(amount)
+
+
+func _show_banner(text: String, col: Color = Color(1.0, 0.94, 0.30)) -> void:
+	if hud == null:
+		return
+	hud.banner_text = text
+	hud.banner_color = col
+	_banner_ttl = 3.2
+
+
+# ================================================================== commands
 
 func _dispatch_cmd(cmd: Dictionary) -> void:
 	if _is_finished:
 		return
-	if GameSession.play_mode == GameSession.PlayMode.LAN_HOST or GameSession.play_mode == GameSession.PlayMode.LAN_CLIENT:
+	if _is_lan():
 		GameSession.net.send_command("td_cmd", cmd)
 	else:
 		_apply_cmd(cmd)
@@ -280,161 +358,440 @@ func _on_net_command(_sender: int, cmd_type: String, payload: Dictionary) -> voi
 func _apply_cmd(cmd: Dictionary) -> void:
 	var res := director.execute_command(cmd)
 	var act := str(cmd.get("action", ""))
+	var pid := int(cmd.get("player_id", 1))
 	if bool(res.get("ok", false)):
-		MoonRPG.play_sfx("sfx.ui_confirm")
-		if act == "build_or_upgrade":
-			var pad_id := str(cmd.get("pad_id", ""))
-			for p in director.pads:
-				if str(p["id"]) == pad_id:
-					vfx.spawn_burst(p["pos"] as Vector2, Color(1.0, 0.92, 0.55), 12, 62.0, 35.0)
-					vfx.spawn_shockwave(p["pos"] as Vector2, 22.0, Color(0.42, 0.90, 1.0) if int(cmd.get("player_id", 1)) == 1 else Color(1.0, 0.45, 0.48), 0.28)
-					break
-			if _tutorial_step == 0:
-				_tutorial_step = 1
-				_update_guide()
-		elif act == "call_wave" and _tutorial_step < 2:
-			_tutorial_step = 2
-			_update_guide()
-	else:
-		if res.has("reason"):
-			_show_banner("⚠ " + str(res["reason"]), Color(1.0, 0.45, 0.35))
-			MoonRPG.play_sfx("sfx.hurt")
-	_refresh_hud()
+		match act:
+			"rally_hero":
+				var p := Vector2(float(cmd.get("x", 0.0)), float(cmd.get("y", 0.0)))
+				vfx.spawn_shockwave(p, 12.0, UIKit.pcol(pid), 0.25)
+				_tutorial_goal("rally")
+			"set_rally":
+				vfx.spawn_shockwave(res["pos"], 14.0, UIKit.pcol(pid), 0.3)
+				MoonRPG.play_sfx("sfx.ui_confirm", -6.0)
+			"set_priority", "ping":
+				MoonRPG.play_sfx("sfx.ui_confirm", -6.0)
+	elif res.has("reason") and _is_local_seat(pid):
+		_show_banner(str(res["reason"]), UIKit.BAD)
+		MoonRPG.play_sfx("sfx.ui_back", -4.0)
 
 
-func _show_banner(text: String, col: Color = Color(1.0, 0.94, 0.30)) -> void:
-	if _guide_banner == null:
+func _is_local_seat(pid: int) -> bool:
+	var s: Seat = seats.get(pid, null)
+	return s != null and s.human and not s.remote
+
+
+func _on_hud_action(id: String) -> void:
+	var local := _local_seat_ids()
+	var pid := local[0] if not local.is_empty() else 1
+	match id:
+		"call_wave":
+			_dispatch_cmd({"player_id": pid, "action": "call_wave"})
+		"ult":
+			_dispatch_cmd({"player_id": pid, "action": "synchro_ult"})
+		"speed":
+			_cycle_speed()
+		"pause":
+			_open_pause()
+		"p1_skill", "p2_skill":
+			var sp := 1 if id == "p1_skill" else 2
+			var s: Seat = seats[sp]
+			s.targeting = "skill"
+			_show_banner("点击地图选择【%s】的释放位置" % str(CoopTDDirector.HERO_SKILLS[sp]["name"]), UIKit.pcol(sp))
+		"p1_gift":
+			_dispatch_cmd({"player_id": 1, "action": "transfer_gold", "amount": 50})
+		"p2_gift":
+			_dispatch_cmd({"player_id": 2, "action": "transfer_gold", "amount": 50})
+
+
+func _cycle_speed() -> void:
+	_speed_mult = 2.0 if _speed_mult < 1.5 else (3.0 if _speed_mult < 2.5 else 1.0)
+	MoonRPG.play_sfx("sfx.ui_confirm", -8.0)
+
+
+func _open_pause() -> void:
+	if _is_finished or pause_menu.visible:
 		return
-	_guide_banner.text = text
-	_guide_banner.add_theme_color_override("font_color", col)
-	_banner_ttl = 3.2
+	for pid in seats.keys():
+		_close_menu(seats[pid])
+		(seats[pid] as Seat).targeting = ""
+	queue_redraw()
+	pause_menu.open()
 
 
-func _update_guide() -> void:
-	if _guide_banner == null or _guide_beacon == null:
-		return
-	_guide_banner.add_theme_color_override("font_color", Color(1.0, 0.94, 0.30))
-	match _tutorial_step:
-		0:
-			if not director.pads.is_empty():
-				var p0: Vector2 = director.pads[0]["pos"]
-				_guide_beacon.badge_y_offset = 16.0 if p0.y < 85.0 else -24.0
-				_guide_beacon.point_to(p0, "▲ P1点此建塔 ▲" if p0.y < 85.0 else "▼ P1点此建塔 ▼")
-			_guide_banner.text = "★ 合作引导 [1/2]：左键点击蓝色高亮塔位建塔！P2(AI或方向键+Enter)将守卫南路并与你触发连携！"
-		1:
-			_guide_beacon.clear_target()
-			_guide_banner.text = "★ 合作引导 [2/2]：防线就绪！按 [Space] 或点击【▶召波】开始战斗！按 [X] 可出售选中塔！"
-		_:
-			_guide_beacon.clear_target()
-			_guide_banner.text = "🤝 提示：P1×P2相邻建【寒冰+法师】触发冰火超载，满100%按【☄双星】释放全屏合体大招！"
-
+# ================================================================== input
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _is_finished:
 		return
-	var local_p := GameSession.local_player_id
-
 	if event is InputEventMouseMotion:
-		var mpos := InputManager.get_canvas_mouse_pos(self)
-		for i in range(director.pads.size()):
-			if mpos.distance_to(director.pads[i]["pos"]) <= 22.0:
-				_p1_pad_idx = i
-				break
+		var ms := _mouse_seat()
+		if ms != null:
+			ms.pad_active = false
+			ms.cursor = get_global_mouse_position()
+			_update_hover(ms)
+			if ms.menu != null:
+				var h := ms.menu.hit(ms.cursor)
+				if h != ms.menu.hover:
+					ms.menu.confirm_sell = false
+				ms.menu.hover = h
 		return
-
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		var ms := _mouse_seat()
+		if ms == null:
+			return
 		var mb := event as InputEventMouseButton
-		var mpos := InputManager.get_canvas_mouse_pos(self)
-		if mpos.y < 30.0 or mpos.y > 238.0:
+		var pos := get_global_mouse_position()
+		if pos.y < PLAY_TOP or pos.y >= PLAY_BOTTOM:
 			return
-		if mb.button_index == MOUSE_BUTTON_RIGHT:
-			_dispatch_cmd({"player_id": local_p, "action": "rally_hero", "x": mpos.x, "y": mpos.y})
-			vfx.spawn_shockwave(mpos, 16.0, Color(0.40, 0.88, 1.0), 0.25)
-			get_viewport().set_input_as_handled()
-			return
-		elif mb.button_index == MOUSE_BUTTON_MIDDLE:
-			_dispatch_cmd({"player_id": local_p, "action": "ping", "x": mpos.x, "y": mpos.y, "label": "⚠ P%d请求支援!" % local_p})
-			get_viewport().set_input_as_handled()
-			return
-		elif mb.button_index == MOUSE_BUTTON_LEFT:
-			for i in range(director.pads.size()):
-				if mpos.distance_to(director.pads[i]["pos"]) <= 22.0:
-					_p1_pad_idx = i
-					_dispatch_cmd({
-						"player_id": local_p, "action": "build_or_upgrade",
-						"pad_id": str(director.pads[i]["id"]), "tower_id": _p1_tower,
-					})
-					get_viewport().set_input_as_handled()
-					return
-
-	elif event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
-		var kc := (event as InputEventKey).keycode
-		match kc:
-			KEY_1: _p1_tower = "arrow"; _refresh_hud()
-			KEY_2: _p1_tower = "mage"; _refresh_hud()
-			KEY_3: _p1_tower = "frost"; _refresh_hud()
-			KEY_4: _p1_tower = "barracks"; _refresh_hud()
-			KEY_X:
-				if not director.pads.is_empty():
-					_dispatch_cmd({"player_id": local_p, "action": "sell", "pad_id": str(director.pads[_p1_pad_idx]["id"])})
-			KEY_SPACE: _dispatch_cmd({"player_id": local_p, "action": "call_wave"})
-			KEY_T: _dispatch_cmd({"player_id": local_p, "action": "transfer_gold", "amount": 50})
-			KEY_U: _dispatch_cmd({"player_id": local_p, "action": "synchro_ult"})
-			KEY_P:
-				var mp := InputManager.get_canvas_mouse_pos(self)
-				_dispatch_cmd({"player_id": local_p, "action": "ping", "x": mp.x, "y": mp.y, "label": "⚠ P%d标记!" % local_p})
-			KEY_LEFT, KEY_UP:
-				if not ai_enabled and not director.pads.is_empty():
-					_p2_pad_idx = (_p2_pad_idx - 1 + director.pads.size()) % director.pads.size()
-			KEY_RIGHT, KEY_DOWN:
-				if not ai_enabled and not director.pads.is_empty():
-					_p2_pad_idx = (_p2_pad_idx + 1) % director.pads.size()
-			KEY_ENTER, KEY_KP_ENTER:
-				if not ai_enabled and not director.pads.is_empty():
-					_dispatch_cmd({
-						"player_id": 2, "action": "build_or_upgrade",
-						"pad_id": str(director.pads[_p2_pad_idx]["id"]), "tower_id": _p2_tower,
-					})
-			KEY_M:
-				var idx := _tower_types.find(_p2_tower)
-				_p2_tower = _tower_types[(idx + 1) % _tower_types.size()]
-				_show_banner("P2 切换选塔：%s" % _p2_tower, Color(1.0, 0.58, 0.58))
-			KEY_G:
-				if not ai_enabled:
-					_dispatch_cmd({"player_id": 2, "action": "transfer_gold", "amount": 50})
-			KEY_O:
-				if not ai_enabled:
-					_dispatch_cmd({"player_id": 2, "action": "synchro_ult"})
-
-
-func _process(delta: float) -> void:
-	if _is_finished:
+		ms.cursor = pos
+		_update_hover(ms)
+		match mb.button_index:
+			MOUSE_BUTTON_LEFT:
+				_seat_confirm(ms, true)
+			MOUSE_BUTTON_RIGHT:
+				if ms.menu != null or ms.targeting != "":
+					_seat_cancel(ms)
+				else:
+					_dispatch_cmd({"player_id": ms.pid, "action": "rally_hero", "x": pos.x, "y": pos.y})
+			MOUSE_BUTTON_MIDDLE:
+				_dispatch_cmd({"player_id": ms.pid, "action": "ping", "x": pos.x, "y": pos.y, "label": "P%d：支援这里！" % ms.pid})
+		get_viewport().set_input_as_handled()
 		return
-	_flow_t += delta
-	vfx.tick(delta)
-	position = vfx.shake_offset
-	if _guide_beacon != null:
-		var in_cine := (vfx.intro_timer > 0.0 or vfx.boss_cutin_timer > 0.0 or vfx.ult_cinematic_timer > 0.0)
-		_guide_beacon.visible = (_tutorial_step == 0 and not in_cine)
+	if event is InputEventKey and (event as InputEventKey).pressed and not (event as InputEventKey).echo:
+		_handle_key(event as InputEventKey)
+		return
+	if event is InputEventJoypadButton and (event as InputEventJoypadButton).pressed:
+		_handle_joy_button(event as InputEventJoypadButton)
 
-	for cuid in _hit_flash.keys():
-		_hit_flash[cuid] = maxf(0.0, float(_hit_flash[cuid]) - delta)
 
+func _mouse_seat() -> Seat:
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if s.uses_mouse and s.human and not s.remote:
+			return s
+	return null
+
+
+func _key_seat() -> Seat:
+	var s: Seat = seats[2]
+	return s if s.keyboard and s.human else null
+
+
+func _handle_key(k: InputEventKey) -> void:
+	var ms := _mouse_seat()
+	var ks := _key_seat()
+	match k.keycode:
+		KEY_ESCAPE:
+			var open_any := false
+			for pid in seats.keys():
+				var s: Seat = seats[pid]
+				if s.menu != null or s.targeting != "":
+					_seat_cancel(s)
+					open_any = true
+			if not open_any:
+				_open_pause()
+		KEY_TAB:
+			if _tutorial_step >= 0:
+				_end_tutorial(true)
+		KEY_SPACE:
+			if ms != null:
+				_dispatch_cmd({"player_id": ms.pid, "action": "call_wave"})
+		KEY_F:
+			_cycle_speed()
+	if ms != null:
+		match k.keycode:
+			KEY_Q:
+				_cast_skill_at(ms, ms.cursor)
+			KEY_T:
+				_dispatch_cmd({"player_id": ms.pid, "action": "transfer_gold", "amount": 50})
+			KEY_R:
+				_dispatch_cmd({"player_id": ms.pid, "action": "synchro_ult"})
+			KEY_1, KEY_2, KEY_3, KEY_4:
+				if ms.hover_pad >= 0 and ms.menu == null:
+					var tid: String = TowerCatalog.TOWER_IDS[k.keycode - KEY_1]
+					_dispatch_cmd({"player_id": ms.pid, "action": "build_or_upgrade", "pad_id": str(director.pads[ms.hover_pad]["id"]), "tower_id": tid})
+	if ks != null:
+		ks.pad_active = false
+		match k.keycode:
+			KEY_ENTER, KEY_KP_ENTER:
+				_seat_confirm(ks, false)
+			KEY_SHIFT:
+				if k.location == KEY_LOCATION_RIGHT:
+					_seat_cancel(ks)
+			KEY_CTRL:
+				if k.location == KEY_LOCATION_RIGHT:
+					_dispatch_cmd({"player_id": ks.pid, "action": "synchro_ult"})
+			KEY_SLASH:
+				_cast_skill_at(ks, ks.cursor)
+			KEY_PERIOD:
+				_dispatch_cmd({"player_id": ks.pid, "action": "rally_hero", "x": ks.cursor.x, "y": ks.cursor.y})
+			KEY_COMMA:
+				_dispatch_cmd({"player_id": ks.pid, "action": "transfer_gold", "amount": 50})
+			KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT:
+				if ks.menu != null:
+					var dir := Vector2.ZERO
+					dir.x = float(Input.is_key_pressed(KEY_RIGHT)) - float(Input.is_key_pressed(KEY_LEFT))
+					dir.y = float(Input.is_key_pressed(KEY_DOWN)) - float(Input.is_key_pressed(KEY_UP))
+					ks.menu.move_selection(dir)
+					MoonRPG.play_sfx("sfx.ui_confirm", -14.0)
+
+
+func _handle_joy_button(jb: InputEventJoypadButton) -> void:
+	var s: Seat = null
+	for pid in [1, 2]:
+		var cand: Seat = seats[pid]
+		if cand.joy == jb.device and cand.human and not cand.remote:
+			s = cand
+	if s == null:
+		return
+	if not s.pad_active:
+		s.pad_active = true
+		_refresh_hud_keys()
+	match jb.button_index:
+		JOY_BUTTON_A:
+			_seat_confirm(s, false)
+		JOY_BUTTON_B:
+			_seat_cancel(s)
+		JOY_BUTTON_X:
+			_cast_skill_at(s, s.cursor)
+		JOY_BUTTON_Y:
+			_dispatch_cmd({"player_id": s.pid, "action": "synchro_ult"})
+		JOY_BUTTON_RIGHT_SHOULDER:
+			_dispatch_cmd({"player_id": s.pid, "action": "rally_hero", "x": s.cursor.x, "y": s.cursor.y})
+		JOY_BUTTON_LEFT_SHOULDER:
+			_dispatch_cmd({"player_id": s.pid, "action": "transfer_gold", "amount": 50})
+		JOY_BUTTON_START:
+			_open_pause()
+		JOY_BUTTON_BACK:
+			_dispatch_cmd({"player_id": s.pid, "action": "call_wave"})
+		JOY_BUTTON_DPAD_UP, JOY_BUTTON_DPAD_DOWN, JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT:
+			if s.menu != null:
+				var d := {JOY_BUTTON_DPAD_UP: Vector2.UP, JOY_BUTTON_DPAD_DOWN: Vector2.DOWN, JOY_BUTTON_DPAD_LEFT: Vector2.LEFT, JOY_BUTTON_DPAD_RIGHT: Vector2.RIGHT}
+				s.menu.move_selection(d[jb.button_index])
+
+
+func _cast_skill_at(s: Seat, pos: Vector2) -> void:
+	s.targeting = ""
+	_dispatch_cmd({"player_id": s.pid, "action": "hero_skill", "x": pos.x, "y": pos.y})
+
+
+## Confirm = left click (mouse) / Enter (P2 keys) / A (gamepad).
+func _seat_confirm(s: Seat, is_mouse: bool) -> void:
+	if s.targeting == "skill":
+		_cast_skill_at(s, s.cursor)
+		return
+	if s.targeting == "rally":
+		_dispatch_cmd({"player_id": s.pid, "action": "set_rally", "pad_id": s.rally_pad, "x": s.cursor.x, "y": s.cursor.y})
+		s.targeting = ""
+		return
+	if s.menu != null:
+		var idx := s.menu.hit(s.cursor) if is_mouse else s.menu.hover
+		if idx >= 0:
+			_activate_option(s, idx)
+			return
+		if is_mouse and s.hover_pad >= 0 and s.hover_pad != s.menu.pad_idx:
+			_open_menu(s, s.hover_pad)
+			return
+		if is_mouse and s.menu.is_inside(s.cursor):
+			return
+		_close_menu(s)
+		return
+	if s.hover_pad >= 0:
+		_open_menu(s, s.hover_pad)
+
+
+func _seat_cancel(s: Seat) -> void:
+	if s.targeting != "":
+		s.targeting = ""
+		return
+	_close_menu(s)
+
+
+func _open_menu(s: Seat, pad_idx: int) -> void:
+	s.menu = RadialMenu.new()
+	s.menu.build(director, pad_idx, s.pid)
+	s.menu.hover = -1
+	MoonRPG.play_sfx("sfx.ui_confirm", -10.0)
+
+
+func _close_menu(s: Seat) -> void:
+	s.menu = null
+
+
+func _activate_option(s: Seat, idx: int) -> void:
+	var o: Dictionary = s.menu.options[idx]
+	if not bool(o["enabled"]):
+		_show_banner("P%d 金币不足（需要 %dG）" % [s.pid, int(o.get("cost", 0))], UIKit.BAD)
+		MoonRPG.play_sfx("sfx.ui_back", -4.0)
+		return
+	match str(o["kind"]):
+		"sell":
+			if not s.menu.confirm_sell:
+				s.menu.confirm_sell = true
+				s.menu.hover = idx
+				MoonRPG.play_sfx("sfx.ui_confirm", -8.0)
+				return
+		"rally":
+			s.targeting = "rally"
+			s.rally_pad = s.menu.pad_id
+			_close_menu(s)
+			_show_banner("选择道路上的新集结点（右键取消）", UIKit.pcol(s.pid))
+			return
+	var cmd: Dictionary = (o["cmd"] as Dictionary).duplicate()
+	cmd["player_id"] = s.pid
+	_dispatch_cmd(cmd)
+	if str(o["kind"]) == "priority":
+		s.menu.build(director, s.menu.pad_idx, s.pid)
+		s.menu.anim = 1.0
+		s.menu.hover = idx
+	else:
+		_close_menu(s)
+
+
+func _update_hover(s: Seat) -> void:
+	s.hover_pad = _pad_at(s.cursor)
+
+
+func _pad_at(p: Vector2) -> int:
+	var best := -1
+	var best_d := INF
+	for i in range(director.pads.size()):
+		var pp: Vector2 = director.pads[i]["pos"]
+		var hit := p.distance_to(pp) <= 15.0
+		if not hit and director.pad_to_tower_uid.has(str(director.pads[i]["id"])):
+			hit = Rect2(pp + Vector2(-13, -30), Vector2(26, 40)).has_point(p)
+		if hit and p.distance_to(pp) < best_d:
+			best_d = p.distance_to(pp)
+			best = i
+	return best
+
+
+func _update_seat_motion(delta: float) -> void:
+	for pid in [1, 2]:
+		var s: Seat = seats[pid]
+		if not s.human or s.remote:
+			continue
+		var move := Vector2.ZERO
+		if s.keyboard and s.menu == null:
+			move.x = float(Input.is_key_pressed(KEY_RIGHT)) - float(Input.is_key_pressed(KEY_LEFT))
+			move.y = float(Input.is_key_pressed(KEY_DOWN)) - float(Input.is_key_pressed(KEY_UP))
+		if s.joy >= 0:
+			var stick := Vector2(Input.get_joy_axis(s.joy, JOY_AXIS_LEFT_X), Input.get_joy_axis(s.joy, JOY_AXIS_LEFT_Y))
+			if stick.length() > STICK_DEADZONE:
+				if not s.pad_active:
+					s.pad_active = true
+					_refresh_hud_keys()
+				if s.menu != null:
+					if not s.stick_latch and stick.length() > 0.6:
+						s.menu.move_selection(stick)
+						s.stick_latch = true
+				else:
+					move += stick
+			else:
+				s.stick_latch = false
+			if s.menu == null:
+				move.x += float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_RIGHT)) - float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_LEFT))
+				move.y += float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_DOWN)) - float(Input.is_joy_button_pressed(s.joy, JOY_BUTTON_DPAD_UP))
+		if move.length() > 0.01:
+			s.cursor += move.limit_length(1.0) * CURSOR_SPEED * delta
+			s.cursor = Vector2(clampf(s.cursor.x, 6.0, 474.0), clampf(s.cursor.y, PLAY_TOP + 4.0, PLAY_BOTTOM - 4.0))
+			_update_hover(s)
+		elif (s.keyboard or s.pad_active) and s.hover_pad >= 0 and s.menu == null:
+			# gentle magnetic snap onto the hovered pad for keyboard / gamepad users
+			s.cursor = s.cursor.lerp(director.pads[s.hover_pad]["pos"], minf(1.0, delta * 10.0))
+		if s.menu != null:
+			s.menu.tick(delta)
+			var keep_hover := s.menu.hover
+			var keep_anim := s.menu.anim
+			var keep_confirm := s.menu.confirm_sell
+			s.menu.build(director, s.menu.pad_idx, s.pid)
+			s.menu.hover = keep_hover if keep_hover < s.menu.options.size() else -1
+			s.menu.anim = keep_anim
+			s.menu.confirm_sell = keep_confirm
+
+
+# ================================================================== tutorial
+
+func _tutorial_goal(goal: String) -> void:
+	if _tutorial_step < 0 or _tutorial_step >= TUTORIAL.size():
+		return
+	if str(TUTORIAL[_tutorial_step]["goal"]) != goal:
+		return
+	_tutorial_step += 1
+	MoonRPG.play_sfx("sfx.checkpoint", -6.0)
+	if _tutorial_step >= TUTORIAL.size():
+		_end_tutorial(false)
+
+
+func _end_tutorial(skipped: bool) -> void:
+	_tutorial_step = -1
+	GameSession.meta.mark_tutorial_done()
+	_show_banner("已跳过教程" if skipped else "教程完成！与搭档并肩守住王城吧！", UIKit.GOOD)
+
+
+func _update_guide(delta: float) -> void:
 	if _banner_ttl > 0.0:
 		_banner_ttl -= delta
-		if _banner_ttl <= 0.0:
-			_update_guide()
+		hud.banner_alpha = clampf(_banner_ttl / 0.4, 0.0, 1.0)
+		hud.highlight = ""
+		return
+	if _tutorial_step >= 0:
+		var step: Dictionary = TUTORIAL[_tutorial_step]
+		hud.banner_text = str(step["text"]) + "   [Tab 跳过]"
+		hud.banner_color = Color(1.0, 0.94, 0.40)
+		hud.banner_alpha = 1.0
+		hud.highlight = str(step["hud"])
+		return
+	hud.highlight = ""
+	_tip_t += delta
+	if _tip_t > 16.0:
+		_tip_t = 0.0
+		_tip_idx = (_tip_idx + 1) % TIPS.size()
+	var show_tip := _tip_t < 7.0 and director.wave_dir.current_wave_index >= 0
+	hud.banner_text = TIPS[_tip_idx]
+	hud.banner_color = UIKit.TEXT_DIM
+	hud.banner_alpha = clampf(minf(_tip_t * 2.0, (7.0 - _tip_t) * 2.0), 0.0, 0.85) if show_tip else 0.0
 
-	if not _is_paused:
-		var dt := delta * _speed_mult
+
+# ================================================================== main loop
+
+func _process(delta: float) -> void:
+	_flow_t += delta
+	_fire_sfx_cd -= delta
+	_kill_sfx_cd -= delta
+	var dt := delta * _speed_mult
+	vfx.tick(dt)
+	position = vfx.shake_offset if GameSettings.screen_shake else Vector2.ZERO
+	for cuid in _hit_flash.keys():
+		_hit_flash[cuid] = maxf(0.0, float(_hit_flash[cuid]) - delta)
+	for t in director.engine.towers.values():
+		if float(t.get("fire_anim", 0.0)) > 0.0:
+			t["fire_anim"] = maxf(0.0, float(t["fire_anim"]) - dt)
+	_update_seat_motion(delta)
+	if not _is_finished:
 		director.tick(dt)
-		if ai_enabled and GameSession.play_mode != GameSession.PlayMode.LAN_CLIENT:
+		if ai_partner != null and GameSession.play_mode != GameSession.PlayMode.LAN_CLIENT:
 			ai_partner.tick(dt, director)
 		if director.is_victory():
 			_finish_stage(true)
-
-	_refresh_hud()
+		elif director.is_defeat():
+			_finish_stage(false)
+		_update_music()
+	_update_guide(delta)
+	hud.speed_mult = _speed_mult
+	hud.refresh(delta)
 	queue_redraw()
+
+
+func _update_music() -> void:
+	var boss_alive := false
+	for c in director.engine.creeps:
+		if bool(c.get("is_boss", false)):
+			boss_alive = true
+			break
+	if boss_alive != _boss_music:
+		_boss_music = boss_alive
+		MoonRPG.play_bgm("bgm.boss" if boss_alive else "bgm.forest", 0.8)
 
 
 func _finish_stage(won: bool) -> void:
@@ -442,199 +799,297 @@ func _finish_stage(won: bool) -> void:
 		return
 	_is_finished = true
 	position = Vector2.ZERO
-	MoonRPG.play_sfx("sfx.quest_clear" if won else "sfx.hurt")
+	for pid in seats.keys():
+		_close_menu(seats[pid])
+		(seats[pid] as Seat).targeting = ""
+	var sid := str(director.stage_def["id"])
+	var meta := GameSession.meta
 	var stars := 0
-	if won:
-		stars = GameSession.meta.record_stage_clear(str(director.stage_def["id"]), director.engine.lives, director.max_lives, director.difficulty, director.leaks)
-	var grade := "S" if stars == 3 else ("A" if stars == 2 else ("B" if won else "D"))
-	_result_panel.show_result({
-		"won": won, "grade": grade, "collected": stars, "total_collectibles": 3,
-		"elapsed_sec": director.elapsed, "no_hit": director.leaks == 0,
-	}, "双子大捷！获得 %d★（可前往大地图点亮合作天赋）" % stars, "王城防线被攻破…调整双人连携再战！")
+	var new_record := false
+	if director.endless:
+		new_record = meta.record_endless(sid, director.wave_dir.current_wave_index + 1)
+	elif won:
+		stars = meta.record_stage_clear(sid, director.engine.lives, director.max_lives, director.difficulty, director.leaks)
+	if _tutorial_step >= 0 and won:
+		_end_tutorial(false)
+	MoonRPG.play_sfx("sfx.quest_clear" if (won or director.endless) else "sfx.hurt")
+	MoonRPG.play_bgm("bgm.village", 1.2)
+	var ids := CampaignData.get_stage_ids()
+	var next_idx := ids.find(sid) + 1
+	result_screen.show_result({
+		"won": won, "stars": stars, "crown": won and director.difficulty == "hard", "difficulty": director.difficulty,
+		"endless": director.endless, "wave": director.wave_dir.current_wave_index + 1,
+		"best_wave": int(meta.endless_best.get(sid, 0)), "new_record": new_record,
+		"elapsed": director.elapsed, "leaks": director.leaks, "lives": director.engine.lives, "max_lives": director.max_lives,
+		"stats": director.stats, "mvp": director.get_mvp(), "stage_name": str(director.stage_def["name"]),
+		"has_next": next_idx > 0 and next_idx < ids.size() and not director.endless,
+	})
 
 
-func _refresh_hud() -> void:
-	if _hud_top == null:
-		return
-	_hud_top.text = "【%s】 P1(蓝):%dG | 城防:%d/%d 波:%d/%d 连携:%d条 | P2(红):%dG (%s)\nP1:左键建/升 右键英雄 X卖塔 T转账 U大招 | P2:%s" % [
-		str(director.stage_def.get("name", "双子堡垒")),
-		int(director.gold[1]), director.engine.lives, director.max_lives,
-		maxi(0, director.wave_dir.current_wave_index + 1), director.wave_dir.get_total_waves(),
-		director.combo_links.size(), int(director.gold[2]),
-		("AI搭档" if ai_enabled else "玩家操控"),
-		("AI自动协作中" if ai_enabled else "方向键选位 Enter建塔 M换塔 G转账 O大招")
-	]
-	for tid in _tower_btns.keys():
-		(_tower_btns[tid] as Button).modulate = Color(1.0, 0.96, 0.45) if tid == _p1_tower else Color(0.84, 0.88, 0.96)
-	if _ult_btn != null:
-		var pct := int(director.synchro_charge)
-		_ult_btn.text = "☄双星就绪!" if pct >= 100 else "☄双星%d%%" % pct
-		_ult_btn.modulate = Color(1.0, 0.62, 1.0) if pct >= 100 else Color(0.75, 0.78, 0.86)
-	if _wave_btn != null:
-		_wave_btn.modulate = Color(1.0, 0.92, 0.32) if _tutorial_step == 1 else Color.WHITE
+func _go_next_stage() -> void:
+	var ids := CampaignData.get_stage_ids()
+	var next_idx := ids.find(str(director.stage_def["id"])) + 1
+	if next_idx > 0 and next_idx < ids.size():
+		GameSession.selected_stage_id = ids[next_idx]
+		SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn")
 
+
+# ================================================================== textures
+
+func _retro_tex(fname: String) -> Texture2D:
+	if _tex_cache.has(fname):
+		return _tex_cache[fname]
+	var full := RETRO_DIR + fname
+	var tex: Texture2D = load(full) if ResourceLoader.exists(full) else null
+	_tex_cache[fname] = tex
+	return tex
+
+
+func _creep_texture(eid: String) -> Texture2D:
+	return PixelCreepSprites.get_frame(eid, 0)
+
+
+# ================================================================== drawing
 
 func _draw() -> void:
-	var font := ThemeManager.get_font() if ThemeManager else ThemeDB.fallback_font
-	var tree_tex: Texture2D = AssetRegistry.get_prop_texture("tree") if AssetRegistry else null
-	var bush_tex: Texture2D = AssetRegistry.get_prop_texture("bush") if AssetRegistry else null
+	var font := UIKit.get_font()
+	TerrainBaker.draw_ground(self, director.stage_def, biome, _flow_t)
+	_draw_pads()
+	_draw_ranges()
+	_draw_combo_links()
+	_draw_actors()
+	TerrainBaker.draw_foreground(self, director.stage_def, biome, _flow_t)
+	vfx.draw_world_fx(self, font)
+	_draw_wave_preview()
+	_draw_pings()
+	_draw_seat_overlays()
+	vfx.draw_cinematic_overlays(self, font)
 
-	# 1. Biome-Specific Pixel-Art Battlefield Backdrop!
-	TowerArtRenderer.draw_biome_backdrop(self, biome, _flow_t, _retro_tex("tile_meadow.png"), _retro_tex("tile_stone.png"), tree_tex, bush_tex)
 
-	# 2. Multi-Lane Roads (Grassy Trim + Stone Rim + Shaded Dirt/Cobble Center + Animated Chevrons)
-	var road_outer := Color(0.24, 0.17, 0.10) if biome == "bridge" else (Color(0.20, 0.14, 0.26) if biome == "rift" else Color(0.24, 0.23, 0.28))
-	var road_inner := Color(0.54, 0.42, 0.26) if biome == "bridge" else (Color(0.40, 0.32, 0.46) if biome == "rift" else Color(0.46, 0.44, 0.50))
-	var road_center := Color(0.64, 0.52, 0.34, 0.55) if biome == "bridge" else (Color(0.50, 0.42, 0.58, 0.45) if biome == "rift" else Color(0.56, 0.54, 0.60, 0.45))
-	for lane in director.engine.lanes.values():
-		var l := lane as TDPathLane
-		if l.waypoints.size() >= 2:
-			draw_polyline(l.waypoints, Color(0.10, 0.14, 0.08, 0.50), 26.0)
-			draw_polyline(l.waypoints, road_outer, 22.0)
-			draw_polyline(l.waypoints, road_inner, 17.0)
-			draw_polyline(l.waypoints, road_center, 9.0)
-			var total_len: float = l.total_length
-			if total_len > 24.0:
-				var spacing := 44.0
-				var d := fmod(_flow_t * 28.0, spacing)
-				while d < total_len - 18.0:
-					var p1 := l.get_point_at_progress(d / total_len)
-					var p2 := l.get_point_at_progress(minf(total_len, d + 4.0) / total_len)
-					var dir := (p2 - p1).normalized()
-					var perp := Vector2(-dir.y, dir.x)
-					draw_polyline(PackedVector2Array([p1 - dir * 2.5 + perp * 3.8, p1 + dir * 4.2, p1 - dir * 2.5 - perp * 3.8]), Color(1.0, 0.92, 0.55, 0.55), 1.5)
-					d += spacing
-
-	# 2b. Wooden Plank Bridges over Emerald River (Stage 1)
-	TowerArtRenderer.draw_biome_bridges(self, biome)
-
-	# 3. Royal Castle Gatehouse + Banner
-	var gate_tex := _retro_tex("house_royal_gatehouse.png")
-	if gate_tex != null:
-		draw_texture_rect(gate_tex, Rect2(Vector2(412, 96), Vector2(64, 74)), false)
-
-	# 4. Carved Stone Build Pad Pedestals + Selected Range Circle Preview!
+func _draw_pads() -> void:
 	for i in range(director.pads.size()):
 		var pad: Dictionary = director.pads[i]
 		var pp: Vector2 = pad["pos"]
 		var pid := str(pad["id"])
+		if director.pad_to_tower_uid.has(pid):
+			continue
 		var hint := int(pad.get("owner_hint", 0))
-		if not director.pad_to_tower_uid.has(pid):
-			var ptex := PixelTowerSprites.get_pad_texture(hint)
-			if ptex != null:
-				draw_texture_rect(ptex, Rect2(pp - Vector2(14, 10), Vector2(28, 22)), false)
-		if i == _p1_pad_idx:
-			var pr := 15.0 + 1.2 * sin(_flow_t * 6.0)
-			draw_arc(pp, pr, 0.0, TAU, 20, Color(0.42, 0.90, 1.0), 2.4)
-			# Range Preview Circle for selected tower or existing tower
-			var r_val := 105.0
-			if director.pad_to_tower_uid.has(pid):
-				var existing: Dictionary = director.engine.towers.get(str(director.pad_to_tower_uid[pid]), {})
-				r_val = float(existing.get("range", 105.0))
-			else:
-				var def: Dictionary = director.engine.tower_defs.get(_p1_tower, {})
-				r_val = float(def.get("range", 105.0))
-			draw_circle(pp, r_val, Color(0.42, 0.90, 1.0, 0.06))
-			draw_arc(pp, r_val, 0.0, TAU, 36, Color(0.42, 0.90, 1.0, 0.32), 1.1)
-		if not ai_enabled and i == _p2_pad_idx:
-			draw_arc(pp, 17.5, 0.0, TAU, 20, Color(1.0, 0.40, 0.45), 2.2)
+		var ptex := PixelTowerSprites.get_pad_texture(hint)
+		if ptex != null:
+			draw_texture_rect(ptex, Rect2(pp - Vector2(14, 10), Vector2(28, 22)), false)
+		for spid in [1, 2]:
+			var s: Seat = seats[spid]
+			if s.hover_pad == i and (s.human and not s.remote):
+				var pr := 14.0 + 1.0 * sin(_flow_t * 6.0)
+				draw_arc(pp + Vector2(0, 1), pr, 0.0, TAU, 24, UIKit.pcol(spid), 1.5)
+	if _tutorial_step == 0:
+		for pad in director.pads:
+			if int(pad.get("owner_hint", 0)) == 1 and not director.pad_to_tower_uid.has(str(pad["id"])):
+				var p: Vector2 = pad["pos"]
+				var bob := sin(_flow_t * 5.0) * 2.5
+				draw_arc(p + Vector2(0, 1), 16.0 + 3.0 * absf(sin(_flow_t * 3.0)), 0.0, TAU, 28, UIKit.GOLD, 2.0)
+				draw_colored_polygon(PackedVector2Array([p + Vector2(-5, -30 + bob), p + Vector2(5, -30 + bob), p + Vector2(0, -22 + bob)]), UIKit.GOLD)
+				UIKit.draw_text(self, p + Vector2(-40, -33 + bob), "点击建塔", 7, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER, 80)
+				break
 
-	# 5. Glowing Cross-Player Co-op Tower Combo Energy Lines!
+
+func _draw_ranges() -> void:
+	for spid in [1, 2]:
+		var s: Seat = seats[spid]
+		if not s.human or s.remote:
+			continue
+		var col := UIKit.pcol(spid)
+		if s.menu != null and not s.menu.read_only:
+			var h := s.menu.get_hovered()
+			if not h.is_empty() and float(h.get("range", 0.0)) > 0.0 and str(h["kind"]) != "rally":
+				_range_ring(s.menu.anchor, float(h["range"]), col)
+			elif h.is_empty():
+				var t := director.get_tower_at_pad(s.menu.pad_id)
+				if not t.is_empty() and str(t["role"]) != "barracks":
+					_range_ring(t["pos"], float(t["range"]), col)
+		elif s.hover_pad >= 0 and s.targeting == "":
+			var t := director.get_tower_at_pad(str(director.pads[s.hover_pad]["id"]))
+			if not t.is_empty() and str(t["role"]) != "barracks":
+				_range_ring(t["pos"], float(t["range"]), col)
+
+
+func _range_ring(center: Vector2, r: float, col: Color) -> void:
+	draw_circle(center, r, Color(col.r, col.g, col.b, 0.07))
+	var seg := 48
+	for i in range(seg):
+		if i % 2 == 0:
+			var a0 := TAU * float(i) / float(seg) + _flow_t * 0.3
+			var a1 := TAU * float(i + 1) / float(seg) + _flow_t * 0.3
+			draw_line(center + Vector2(cos(a0), sin(a0)) * r, center + Vector2(cos(a1), sin(a1)) * r, Color(col.r, col.g, col.b, 0.55), 1.0)
+
+
+func _draw_combo_links() -> void:
+	var hovered_uids := {}
+	for spid in [1, 2]:
+		var s: Seat = seats[spid]
+		if s.hover_pad >= 0:
+			var hp := str(director.pads[s.hover_pad]["id"])
+			if director.pad_to_tower_uid.has(hp):
+				hovered_uids[str(director.pad_to_tower_uid[hp])] = true
 	for link in director.combo_links:
-		var a: Vector2 = link["from_pos"]
-		var b: Vector2 = link["to_pos"]
+		var a: Vector2 = (link["from_pos"] as Vector2) - Vector2(0, 10)
+		var b: Vector2 = (link["to_pos"] as Vector2) - Vector2(0, 10)
 		var lcol: Color = link["color"]
-		var pulse := 0.6 + 0.4 * sin(_flow_t * 7.0)
-		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.32 * pulse), 5.5)
-		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.96), 1.8)
-		# Animated traveling spark along the combo tether!
-		var spark_p := a.lerp(b, fmod(_flow_t * 0.9, 1.0))
-		draw_circle(spark_p, 2.5, Color.WHITE)
+		var pulse := 0.6 + 0.4 * sin(_flow_t * 5.0)
+		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.18 * pulse), 4.0)
+		draw_line(a, b, Color(lcol.r, lcol.g, lcol.b, 0.70), 1.0)
+		var sp := a.lerp(b, fmod(_flow_t * 0.8, 1.0))
+		draw_circle(sp, 1.6, Color(1, 1, 1, 0.9))
 		var mid := (a + b) * 0.5
-		draw_rect(Rect2(mid - Vector2(28, 10), Vector2(56, 11)), Color(0.06, 0.05, 0.12, 0.78))
-		draw_string(font, mid + Vector2(-28, -2), str(link["label"]), HORIZONTAL_ALIGNMENT_CENTER, 56, 6, lcol)
+		draw_colored_polygon(PackedVector2Array([mid + Vector2(0, -3.5), mid + Vector2(3.5, 0), mid + Vector2(0, 3.5), mid + Vector2(-3.5, 0)]), lcol)
+		if hovered_uids.has(str(link["t1_uid"])) or hovered_uids.has(str(link["t2_uid"])):
+			var label := "%s · %s" % [str(link["label"]), str(link.get("desc", ""))]
+			var w := UIKit.text_width(label, 6) + 10.0
+			var r := Rect2(mid + Vector2(-w * 0.5, -16), Vector2(w, 11))
+			UIKit.draw_panel(self, r, lcol)
+			UIKit.draw_text(self, r.position + Vector2(5, 8), label, 6, lcol.lightened(0.3))
 
-	# 6. Multi-Tier Pixel-Art Towers!
+
+func _draw_actors() -> void:
+	var items: Array = []
 	for uid in director.engine.towers.keys():
 		var t: Dictionary = director.engine.towers[uid]
-		var owner := int(director.tower_owners.get(uid, 1))
-		TowerArtRenderer.draw_tower_detailed(self, str(t["tower_id"]), t["pos"] as Vector2, int(t["level"]), owner, _flow_t, font)
-
-	# 7. Dual Heroes & Barracks Soldiers (with walk bobbing!)
-	var guard_tex := _retro_tex("npc_guard.png")
-	var hero_tex := _retro_tex("hero_ranger.png")
+		items.append({"y": (t["pos"] as Vector2).y + 4.0, "kind": 0, "ref": t})
 	for s in director.engine.soldiers:
-		if float(s["hp"]) <= 0.0:
-			continue
-		var sp: Vector2 = s["pos"]
-		var bob := absf(sin(_flow_t * 8.0 + sp.x * 0.2)) * 1.8
-		draw_circle(sp + Vector2(0, 6), 7.5, Color(0, 0, 0, 0.30))
-		if bool(s["is_hero"]):
-			var is_p1 := str(s.get("name", "")).begins_with("P1")
-			var tex := hero_tex if is_p1 else guard_tex
-			if tex != null:
-				draw_texture_rect(tex, Rect2(sp - Vector2(13, 16 + bob), Vector2(26, 26)), false)
-			draw_arc(sp + Vector2(0, 6), 10.5, 0.0, TAU, 14, Color(0.35, 0.85, 1.0) if is_p1 else Color(1.0, 0.38, 0.42), 1.8)
-		elif guard_tex != null:
-			draw_texture_rect(guard_tex, Rect2(sp - Vector2(9, 11 + bob), Vector2(18, 18)), false)
-		var shp := clampf(float(s["hp"]) / maxf(1.0, float(s["max_hp"])), 0.0, 1.0)
-		draw_rect(Rect2(sp.x - 8, sp.y - 14, 16, 2.2), Color(0.08, 0.10, 0.12))
-		draw_rect(Rect2(sp.x - 8, sp.y - 14, 16 * shp, 2.2), Color(0.35, 0.98, 0.50))
-
-	# 8. Creeps (Walk Bobbing, White Hit-Flash, Frost Tint, Flapping Bats, Boss Auras!)
+		if float(s["hp"]) > 0.0:
+			items.append({"y": (s["pos"] as Vector2).y, "kind": 1, "ref": s})
 	for c in director.engine.creeps:
-		var cp: Vector2 = c["pos"]
-		var eid := str(c["enemy_id"])
-		var cuid := str(c.get("uid", ""))
-		var is_fly := bool(c["is_flying"])
-		var is_boss := eid.begins_with("boss")
-		var bob := absf(sin(_flow_t * 10.0 + cp.x * 0.15)) * (1.2 if is_boss else 2.2)
-		var dp := cp + (Vector2(0, -10) if is_fly else Vector2(0, -bob))
-		var flash := float(_hit_flash.get(cuid, 0.0)) > 0.0
-		var tint := Color(2.2, 2.2, 2.2) if flash else (Color(0.55, 0.88, 1.0) if float(c.get("slow_timer", 0.0)) > 0.0 else Color.WHITE)
+		items.append({"y": (c["pos"] as Vector2).y + (30.0 if bool(c["is_flying"]) else 0.0), "kind": 2, "ref": c})
+	items.sort_custom(func(a, b): return float(a["y"]) < float(b["y"]))
+	for it in items:
+		match int(it["kind"]):
+			0: _draw_tower(it["ref"])
+			1: _draw_soldier(it["ref"])
+			2: _draw_creep(it["ref"])
 
-		draw_circle(cp + Vector2(0, 5), 11.0 if is_boss else 5.5, Color(0, 0, 0, 0.34))
-		if is_boss:
-			draw_arc(cp + Vector2(0, 5), 14.0 + 1.5 * sin(_flow_t * 6.0), 0.0, TAU, 20, Color(1.0, 0.25, 0.28, 0.75), 1.8)
-		if is_fly:
-			var wy := sin(_flow_t * 14.0 + cp.x * 0.2) * 4.5
-			draw_polygon(PackedVector2Array([dp, dp + Vector2(-9, -2 + wy), dp + Vector2(-4, 4)]), PackedColorArray([Color(0.58, 0.22, 0.80) * tint]))
-			draw_polygon(PackedVector2Array([dp, dp + Vector2(9, -2 + wy), dp + Vector2(4, 4)]), PackedColorArray([Color(0.58, 0.22, 0.80) * tint]))
-			draw_circle(dp, 4.2, Color(0.80, 0.40, 0.98) * tint)
-		else:
-			var tname := "boss_obsidian_clean.png" if eid.begins_with("boss_obsidian") else ("enemy_boss_golem.png" if eid == "boss_frost_colossus" else ("enemy_goblin.png" if (eid in ["goblin", "boss_warlord", "shield_bearer", "shaman"]) else ("enemy_wolf.png" if eid in ["wolf", "assassin"] else "enemy_slime.png")))
-			var ctex := _retro_tex(tname)
-			var sz := Vector2(36, 36) if is_boss else Vector2(22, 22)
-			if ctex != null:
-				draw_texture_rect(ctex, Rect2(dp - sz * 0.5, sz), false, tint)
-		var hp_pct := clampf(float(c["hp"]) / maxf(1.0, float(c["max_hp"])), 0.0, 1.0)
-		var bw := 28.0 if is_boss else 16.0
-		draw_rect(Rect2(dp.x - bw * 0.5, dp.y - 16, bw, 3.0), Color(0.08, 0.08, 0.12))
-		draw_rect(Rect2(dp.x - bw * 0.5, dp.y - 16, bw * hp_pct, 3.0), Color(1.0, 0.28, 0.32))
 
-	# 9. World VFX (Ambient Motes, Projectiles, Chain Lightning, Particles, Floating Damage/Gold!)
-	vfx.draw_world_fx(self, font)
+func _draw_tower(t: Dictionary) -> void:
+	var owner := int(director.tower_owners.get(str(t["uid"]), 1))
+	TowerArtRenderer.draw_tower_detailed(self, t, owner, _flow_t)
 
-	# 10. Tactical Pings
+
+func _draw_soldier(s: Dictionary) -> void:
+	var sp: Vector2 = s["pos"]
+	var is_hero := bool(s.get("is_hero", false))
+	var target: Vector2 = s.get("rally_pos", s.get("home_pos", sp)) if is_hero else s.get("home_pos", sp)
+	var moving := target.distance_to(sp) > 1.5
+	var owner := int(s.get("owner_player", 0))
+	if owner == 0:
+		owner = director._owner_of_source(str(s.get("source_id", "")))
+		if owner == 0:
+			owner = 2 if bool(s.get("is_reinforcement", false)) else 1
+	UnitArtRenderer.draw_soldier(self, s, owner, is_hero, moving, target, _flow_t)
+
+
+func _draw_creep(c: Dictionary) -> void:
+	var flash := float(_hit_flash.get(str(c.get("uid", "")), 0.0)) > 0.0
+	UnitArtRenderer.draw_creep(self, c, flash, _flow_t)
+
+
+func _draw_wave_preview() -> void:
+	var nxt := director.get_next_wave_def()
+	if nxt.is_empty() or director.wave_dir.is_spawning:
+		return
+	var by_lane := {}
+	for g in nxt.get("groups", []):
+		var lid := str(g["lane_id"])
+		if not by_lane.has(lid):
+			by_lane[lid] = []
+		if not (by_lane[lid] as Array).has(str(g["enemy_id"])):
+			(by_lane[lid] as Array).append(str(g["enemy_id"]))
+	for lid in by_lane.keys():
+		var lane: TDPathLane = director.engine.lanes.get(lid, null)
+		if lane == null:
+			continue
+		var p := lane.get_point_at_progress(0.0) + Vector2(12, 0)
+		var pulse := 1.0 + 0.12 * sin(_flow_t * 6.0)
+		draw_circle(p, 8.0 * pulse, Color(0.35, 0.05, 0.06, 0.9))
+		draw_arc(p, 8.0 * pulse, 0.0, TAU, 20, UIKit.BAD, 1.5)
+		if director.wave_countdown > 0.0:
+			var frac := director.wave_countdown / maxf(1.0, director.countdown_total)
+			draw_arc(p, 10.5, -PI * 0.5, -PI * 0.5 + TAU * frac, 24, UIKit.GOLD, 1.5)
+		PixelIcons.draw_icon(self, "skull", p)
+		var ids: Array = by_lane[lid]
+		for k in range(mini(3, ids.size())):
+			var tex := _creep_texture(str(ids[k]))
+			var ip := p + Vector2(12 + k * 12, -6)
+			draw_rect(Rect2(ip, Vector2(11, 11)), Color(0.04, 0.04, 0.08, 0.85))
+			draw_rect(Rect2(ip, Vector2(11, 11)), Color(UIKit.BAD.r, UIKit.BAD.g, UIKit.BAD.b, 0.6), false, 1.0)
+			if tex != null:
+				draw_texture_rect(tex, Rect2(ip + Vector2(0.5, 0.5), Vector2(10, 10)), false)
+
+
+func _draw_pings() -> void:
 	for pg in director.active_pings:
 		var pp: Vector2 = pg["pos"]
-		var pr := 10.0 + fmod(_flow_t * 24.0, 18.0)
-		draw_arc(pp, pr, 0.0, TAU, 16, Color(1.0, 0.92, 0.25), 2.0)
-		draw_string(font, pp + Vector2(-36, -14), str(pg["label"]), HORIZONTAL_ALIGNMENT_CENTER, 72, 7, Color(1.0, 0.94, 0.35))
+		var col := UIKit.pcol(int(pg["player_id"]))
+		var pr := 6.0 + fmod(_flow_t * 24.0, 16.0)
+		draw_arc(pp, pr, 0.0, TAU, 16, col, 1.5)
+		PixelIcons.draw_icon(self, "flag", pp + Vector2(2, -8), 1, col.lightened(0.3))
+		UIKit.draw_text(self, pp + Vector2(-40, -16), str(pg["label"]), 6, col, HORIZONTAL_ALIGNMENT_CENTER, 80)
 
-	# 11. Contextual Mini Tower Inspector Badge (when hovering an existing tower)
-	if _p1_pad_idx >= 0 and _p1_pad_idx < director.pads.size():
-		var hpid := str(director.pads[_p1_pad_idx]["id"])
-		if director.pad_to_tower_uid.has(hpid):
-			var htuid := str(director.pad_to_tower_uid[hpid])
-			var ht: Dictionary = director.engine.towers.get(htuid, {})
-			if not ht.is_empty():
-				var ir := Rect2(Vector2(354, 198), Vector2(120, 36))
-				draw_rect(ir, Color(0.05, 0.08, 0.18, 0.90))
-				draw_rect(ir, Color(0.88, 0.76, 0.38, 0.90), false, 1.4)
-				draw_string(font, ir.position + Vector2(5, 11), "【%s】Lv%d (P%d)" % [str(ht["name"]), int(ht["level"]), int(director.tower_owners.get(htuid, 1))], HORIZONTAL_ALIGNMENT_LEFT, 110, 7, Color(1.0, 0.94, 0.42))
-				draw_string(font, ir.position + Vector2(5, 22), "射程:%d 升级:%dG" % [int(ht.get("range", 0)), int(ht.get("upgrade_cost", 60))], HORIZONTAL_ALIGNMENT_LEFT, 110, 6, Color(0.80, 0.92, 1.0))
-				draw_string(font, ir.position + Vector2(5, 32), "左键升级 | [X]出售", HORIZONTAL_ALIGNMENT_LEFT, 110, 6, Color(0.75, 0.85, 0.78))
 
-	# 12. Full-Screen Cinematic Overlays (Intro Curtain, Wave Banner, Boss Cut-In, Synchro Ult Comets!)
-	vfx.draw_cinematic_overlays(self, font)
+func _draw_seat_overlays() -> void:
+	for spid in [1, 2]:
+		var s: Seat = seats[spid]
+		if not s.human or s.remote:
+			continue
+		var col := UIKit.pcol(spid)
+		if s.menu == null and s.hover_pad >= 0 and s.targeting == "":
+			var t := director.get_tower_at_pad(str(director.pads[s.hover_pad]["id"]))
+			if not t.is_empty():
+				_draw_inspector(t)
+		if s.targeting == "skill":
+			var sk: Dictionary = CoopTDDirector.HERO_SKILLS[spid]
+			var r := float(sk.get("radius", 18.0))
+			draw_circle(s.cursor, r, Color(col.r, col.g, col.b, 0.12))
+			draw_arc(s.cursor, r, 0.0, TAU, 32, col, 1.2)
+		elif s.targeting == "rally":
+			var t := director.get_tower_at_pad(s.rally_pad)
+			if not t.is_empty():
+				_range_ring(t["pos"], CoopTDDirector.RALLY_RANGE, col)
+				var snap := director._nearest_lane_point(s.cursor)
+				var ok := snap.distance_to(s.cursor) <= 20.0 and snap.distance_to(t["pos"]) <= CoopTDDirector.RALLY_RANGE
+				PixelIcons.draw_icon(self, "flag", snap + Vector2(2, -6), 1, Color.WHITE if ok else Color(1, 0.4, 0.4))
+		if s.menu != null:
+			s.menu.draw(self, _flow_t)
+		var show_reticle := s.keyboard or (s.joy >= 0 and s.pad_active) or (not s.uses_mouse)
+		if show_reticle:
+			var c := s.cursor
+			var k := 1.0 + 0.15 * sin(_flow_t * 8.0)
+			for a in [0.0, PI * 0.5, PI, PI * 1.5]:
+				var d := Vector2(cos(a), sin(a))
+				draw_line(c + d * 3.0 * k, c + d * 7.0 * k, Color(0, 0, 0, 0.7), 3.0)
+				draw_line(c + d * 3.0 * k, c + d * 7.0 * k, col, 1.4)
+			UIKit.draw_text(self, c + Vector2(6, -6), "P%d" % spid, 6, col)
+
+
+func _draw_inspector(t: Dictionary) -> void:
+	var owner := int(director.tower_owners.get(str(t["uid"]), 1))
+	var lines: Array[String] = []
+	if str(t["role"]) == "barracks":
+		lines.append("卫兵 %d 名 · 生命 %d · 攻击 %d" % [int(t.get("soldier_count", 2)), int(t["soldier_hp"]), int(t["soldier_atk"])])
+	else:
+		lines.append("伤害 %d · 射程 %d · 攻速 %.2f" % [int(t["damage"]), int(t["range"]), float(t["fire_rate"])])
+		lines.append("目标：%s" % TowerCatalog.PRIORITY_LABELS[int(t.get("priority", 0))])
+	var title := "%s  Lv%d" % [str(t["name"]), int(t["level"])]
+	var w := 122.0
+	var h := 13.0 + 8.0 * lines.size() + 3.0
+	var p: Vector2 = t["pos"]
+	var x := p.x + 16.0
+	if x + w > 476.0:
+		x = p.x - 16.0 - w
+	var y := clampf(p.y - 34.0, PLAY_TOP + 2.0, PLAY_BOTTOM - h - 2.0)
+	var r := Rect2(x, y, w, h)
+	UIKit.draw_panel(self, r, UIKit.pcol(owner))
+	UIKit.draw_text(self, r.position + Vector2(5, 9), title, 7, UIKit.GOLD)
+	UIKit.draw_text(self, Vector2(r.end.x - 5, r.position.y + 9), "P%d" % owner, 6, UIKit.pcol(owner), HORIZONTAL_ALIGNMENT_RIGHT, -1)
+	var yy := r.position.y + 9.0
+	for line in lines:
+		yy += 8.0
+		UIKit.draw_text(self, Vector2(r.position.x + 5, yy), line, 6, UIKit.TEXT)
