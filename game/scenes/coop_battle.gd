@@ -12,7 +12,7 @@ extends Node2D
 const RETRO_DIR := "res://content/packs/jrpg_retro/"
 
 var director := CoopTDDirector.new()
-var ai_partner := CoopAIPartner.new()
+var ai_partner := CoopAIPartner.new(2)
 var vfx := BattleVFX.new()
 var ai_enabled: bool = true
 var biome: String = "bridge"
@@ -49,7 +49,7 @@ func _ready() -> void:
 	var stage := CampaignData.get_stage_by_id(GameSession.selected_stage_id)
 	biome = TowerArtRenderer.get_biome_for_stage(str(stage["id"]))
 	vfx.init_ambient_motes(biome, 24)
-	director.setup_stage(stage, GameSession.meta)
+	director.setup_stage(stage, GameSession.meta, GameSession.difficulty, GameSession.endless_mode)
 
 	# Wire rich VFX & Cinematic callbacks!
 	director.banner_event.connect(_show_banner)
@@ -65,11 +65,9 @@ func _ready() -> void:
 		vfx.play_wave_banner(wname)
 	)
 	director.wave_dir.enemy_spawn_requested.connect(func(eid: String, _lid: String, _wi: int):
-		if eid == "boss_warlord":
-			vfx.play_boss_cutin("哥布林铁甲督军", "高护甲重装统帅 · 善用法师塔与冰火超载击破！", _retro_tex("enemy_goblin.png"))
-			MoonRPG.play_sfx("sfx.hurt")
-		elif eid == "boss_obsidian":
-			vfx.play_boss_cutin("黑曜深渊大魔王", "终极王城围攻者 · 双人合体大招决胜负！", _retro_tex("boss_obsidian_clean.png"))
+		if CreepCatalog.is_boss(eid):
+			var bdef := CreepCatalog.get_def(eid)
+			vfx.play_boss_cutin(str(bdef["name"]), str(bdef.get("cutin_sub", "")), _retro_tex("boss_obsidian_clean.png" if eid.begins_with("boss_obsidian") else ("enemy_boss_golem.png" if eid == "boss_frost_colossus" else "enemy_goblin.png")))
 			MoonRPG.play_sfx("sfx.hurt")
 	)
 	director.engine.tower_fired.connect(func(t: Dictionary, tgt: Dictionary, dmg: float):
@@ -432,7 +430,7 @@ func _process(delta: float) -> void:
 		director.tick(dt)
 		if ai_enabled and GameSession.play_mode != GameSession.PlayMode.LAN_CLIENT:
 			ai_partner.tick(dt, director)
-		if director.all_waves_done and director.engine.creeps.is_empty() and director.engine.lives > 0:
+		if director.is_victory():
 			_finish_stage(true)
 
 	_refresh_hud()
@@ -447,20 +445,20 @@ func _finish_stage(won: bool) -> void:
 	MoonRPG.play_sfx("sfx.quest_clear" if won else "sfx.hurt")
 	var stars := 0
 	if won:
-		stars = GameSession.meta.record_stage_clear(str(director.stage_def["id"]), director.engine.lives, int(director.stage_def.get("lives", 20)))
+		stars = GameSession.meta.record_stage_clear(str(director.stage_def["id"]), director.engine.lives, director.max_lives, director.difficulty, director.leaks)
 	var grade := "S" if stars == 3 else ("A" if stars == 2 else ("B" if won else "D"))
 	_result_panel.show_result({
 		"won": won, "grade": grade, "collected": stars, "total_collectibles": 3,
-		"elapsed_sec": float(director.wave_dir.current_wave_index + 1), "no_hit": director.engine.lives >= 20,
+		"elapsed_sec": director.elapsed, "no_hit": director.leaks == 0,
 	}, "双子大捷！获得 %d★（可前往大地图点亮合作天赋）" % stars, "王城防线被攻破…调整双人连携再战！")
 
 
 func _refresh_hud() -> void:
 	if _hud_top == null:
 		return
-	_hud_top.text = "【%s】 P1(蓝):%dG | 城防:%d/20 波:%d/%d 连携:%d条 | P2(红):%dG (%s)\nP1:左键建/升 右键英雄 X卖塔 T转账 U大招 | P2:%s" % [
+	_hud_top.text = "【%s】 P1(蓝):%dG | 城防:%d/%d 波:%d/%d 连携:%d条 | P2(红):%dG (%s)\nP1:左键建/升 右键英雄 X卖塔 T转账 U大招 | P2:%s" % [
 		str(director.stage_def.get("name", "双子堡垒")),
-		int(director.gold[1]), director.engine.lives,
+		int(director.gold[1]), director.engine.lives, director.max_lives,
 		maxi(0, director.wave_dir.current_wave_index + 1), director.wave_dir.get_total_waves(),
 		director.combo_links.size(), int(director.gold[2]),
 		("AI搭档" if ai_enabled else "玩家操控"),
@@ -604,7 +602,7 @@ func _draw() -> void:
 			draw_polygon(PackedVector2Array([dp, dp + Vector2(9, -2 + wy), dp + Vector2(4, 4)]), PackedColorArray([Color(0.58, 0.22, 0.80) * tint]))
 			draw_circle(dp, 4.2, Color(0.80, 0.40, 0.98) * tint)
 		else:
-			var tname := "boss_obsidian_clean.png" if eid == "boss_obsidian" else ("enemy_goblin.png" if (eid == "goblin" or eid == "boss_warlord") else ("enemy_wolf.png" if eid == "wolf" else "enemy_slime.png"))
+			var tname := "boss_obsidian_clean.png" if eid.begins_with("boss_obsidian") else ("enemy_boss_golem.png" if eid == "boss_frost_colossus" else ("enemy_goblin.png" if (eid in ["goblin", "boss_warlord", "shield_bearer", "shaman"]) else ("enemy_wolf.png" if eid in ["wolf", "assassin"] else "enemy_slime.png")))
 			var ctex := _retro_tex(tname)
 			var sz := Vector2(36, 36) if is_boss else Vector2(22, 22)
 			if ctex != null:

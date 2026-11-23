@@ -7,6 +7,8 @@ enum PlayMode { SOLO_AI, LOCAL_2P, LAN_HOST, LAN_CLIENT }
 
 var play_mode: int = PlayMode.SOLO_AI
 var selected_stage_id: String = "stage_1_twin_bridge"
+var difficulty: String = "normal" # casual | normal | hard
+var endless_mode: bool = false
 var local_player_id: int = 1 # 1 for Host/Solo/Local, 2 for LAN Client
 var meta := MetaProgress.new()
 var net: NetSessionManager

@@ -190,6 +190,8 @@ func spawn_temporary_blocker(pos: Vector2, hp: float = 65.0, atk: float = 11.0, 
 		"respawn_timer": 0.0,
 		"lifetime": lifetime, # >0 = temporary reinforcement
 		"is_hero": false,
+		"home_pos": pos,
+		"respawn_time": 6.0,
 	}
 	soldiers.append(s)
 	return s
@@ -205,10 +207,13 @@ func _spawn_barracks_soldiers(tower: Dictionary) -> void:
 			"uid": "soldier_%d" % _uid_counter,
 			"owner_tower": str(tower["uid"]),
 			"pos": rally + offset,
+			"home_pos": rally + offset,
+			"source_id": str(tower["uid"]),
+			"respawn_time": float(tower.get("respawn_time", 6.0)),
 			"hp": float(tower["soldier_hp"]),
 			"max_hp": float(tower["soldier_hp"]),
 			"atk": float(tower["soldier_atk"]),
-			"block_count": 1,
+			"block_count": int(tower.get("block_count", 1)),
 			"attack_cd": 0.0,
 			"respawn_timer": 0.0,
 			"lifetime": -1.0, # permanent (respawns)
@@ -261,6 +266,9 @@ func spawn_creep(enemy_id: String, lane_id: String) -> Dictionary:
 		"shred_timer": 0.0,
 		"attack_cd": 0.0,
 		"blocked_by": "",
+		"shield": float(def.get("shield", 0.0)),
+		"max_shield": float(def.get("shield", 0.0)),
+		"last_hit_by": "",
 	}
 	creeps.append(creep)
 	creep_spawned.emit(creep)
@@ -268,6 +276,17 @@ func spawn_creep(enemy_id: String, lane_id: String) -> Dictionary:
 
 
 func apply_damage_to_creep(c: Dictionary, raw_dmg: float, dmg_type: String = "physical") -> float:
+	# Optional absorb shield: magic/true damage depletes it first, physical damage is reduced while it holds.
+	var shield := float(c.get("shield", 0.0))
+	if shield > 0.0:
+		if dmg_type == "physical":
+			raw_dmg *= 0.30
+		else:
+			var absorbed := minf(shield, raw_dmg)
+			c["shield"] = shield - absorbed
+			raw_dmg -= absorbed
+			if raw_dmg <= 0.0:
+				return absorbed
 	var net := raw_dmg
 	if dmg_type == "physical":
 		var eff_armor := maxf(0.0, float(c["armor"]) - float(c["shred_amount"]))
@@ -312,6 +331,8 @@ func tick(delta: float) -> void:
 			s["respawn_timer"] = maxf(0.0, float(s["respawn_timer"]) - delta)
 			if float(s["respawn_timer"]) <= 0.0:
 				s["hp"] = float(s["max_hp"])
+				if s.has("home_pos"):
+					s["pos"] = s["home_pos"]
 			continue
 		s["attack_cd"] = maxf(0.0, float(s["attack_cd"]) - delta)
 		blocker_loads[str(s["uid"])] = 0
@@ -353,13 +374,14 @@ func tick(delta: float) -> void:
 			# Melee exchange!
 			if float(blocked_soldier["attack_cd"]) <= 0.0:
 				blocked_soldier["attack_cd"] = 0.85
+				c["last_hit_by"] = str(blocked_soldier.get("source_id", blocked_soldier.get("owner_tower", "")))
 				apply_damage_to_creep(c, float(blocked_soldier["atk"]), "physical")
 			c["attack_cd"] = maxf(0.0, float(c["attack_cd"]) - delta)
 			if float(c["stun_timer"]) <= 0.0 and float(c["attack_cd"]) <= 0.0:
 				c["attack_cd"] = 1.0
 				blocked_soldier["hp"] = float(blocked_soldier["hp"]) - float(c["atk"])
 				if float(blocked_soldier["hp"]) <= 0.0:
-					blocked_soldier["respawn_timer"] = 6.0
+					blocked_soldier["respawn_timer"] = float(blocked_soldier.get("respawn_time", 6.0))
 			continue
 
 		c["blocked_by"] = ""
@@ -483,6 +505,7 @@ func _apply_tower_hit(tower: Dictionary, primary: Dictionary) -> void:
 		chain_lightning_fired.emit(pts)
 
 	for c in targets:
+		c["last_hit_by"] = str(tower["uid"])
 		apply_damage_to_creep(c, dmg, dtype)
 		if float(tower["slow_duration"]) > 0.0 and float(tower["slow_factor"]) < 1.0:
 			apply_status_to_creep(c, "slow", float(tower["slow_factor"]), float(tower["slow_duration"]))
