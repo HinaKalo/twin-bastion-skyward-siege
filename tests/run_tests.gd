@@ -77,12 +77,62 @@ func _run_all() -> void:
 
 func _test_campaign() -> void:
 	var stages := CampaignData.get_stages()
-	_assert_true(stages.size() >= 3, "CampaignData provides the handcrafted co-op stages")
+	_assert_eq(stages.size(), 5, "CampaignData provides 5 handcrafted co-op stages")
+	for s in stages:
+		_check_layout(s)
+	var m := _new_meta()
+	_assert_true(CampaignData.is_unlocked("stage_1_twin_bridge", m) and not CampaignData.is_unlocked("stage_2_rift_cross", m), "Only stage 1 is open on a fresh save")
+	m.stage_stars["stage_1_twin_bridge"] = 1
+	_assert_true(CampaignData.is_unlocked("stage_2_rift_cross", m), "Clearing a stage unlocks the next")
+	_assert_true(not CampaignData.is_endless_unlocked(m), "Endless is locked before stage 3")
 	_assert_eq(str(CampaignData.get_stage_by_id("stage_3_royal_siege")["index"]), "3", "Stage 3 Royal Siege lookup works")
 	for s in stages:
 		for w in s["waves"]:
 			for g in w["groups"]:
 				_assert_true(CreepCatalog.ROSTER.has(str(g["enemy_id"])), "%s uses a known enemy (%s)" % [s["id"], g["enemy_id"]])
+
+
+func _lane_dist(p: Vector2, pts: Array) -> float:
+	var best := INF
+	for i in range(pts.size() - 1):
+		var a: Vector2 = pts[i]
+		var b: Vector2 = pts[i + 1]
+		best = minf(best, p.distance_to(Geometry2D.get_closest_point_to_segment(p, a, b)))
+	return best
+
+
+func _check_layout(s: Dictionary) -> void:
+	var sid := str(s["id"])
+	var bad: Array[String] = []
+	var pads: Array = s["pads"]
+	for pad in pads:
+		var pp: Vector2 = pad["pos"]
+		var rp: Vector2 = pad["rally"]
+		var min_lane := INF
+		var rally_lane := INF
+		for l in s["lanes"]:
+			min_lane = minf(min_lane, _lane_dist(pp, l["points"]))
+			rally_lane = minf(rally_lane, _lane_dist(rp, l["points"]))
+		if min_lane < 20.0:
+			bad.append("%s overlaps a road (%.0fpx)" % [pad["id"], min_lane])
+		if min_lane > 70.0:
+			bad.append("%s is too far from any road (%.0fpx)" % [pad["id"], min_lane])
+		if rally_lane > 8.0:
+			bad.append("%s rally is off-road (%.0fpx)" % [pad["id"], rally_lane])
+		if rp.distance_to(pp) > 60.0:
+			bad.append("%s rally too far from pad" % pad["id"])
+		if pp.x < 16 or pp.x > 404 or pp.y < 36 or pp.y > 240:
+			bad.append("%s outside playfield" % pad["id"])
+		for other in pads:
+			if other != pad and pp.distance_to(other["pos"]) < 32.0:
+				bad.append("%s too close to %s" % [pad["id"], other["id"]])
+	for h in s.get("hero_spawns", []):
+		var hd := INF
+		for l in s["lanes"]:
+			hd = minf(hd, _lane_dist(h, l["points"]))
+		if hd > 30.0:
+			bad.append("hero spawn %s far from road" % str(h))
+	_assert_true(bad.is_empty(), "%s layout is valid %s" % [sid, str(bad)])
 
 
 func _test_meta() -> void:

@@ -24,6 +24,20 @@ func _init(pid: int = 2) -> void:
 		build_cycle = ["arrow", "frost", "mage", "barracks"]
 
 
+## Varies build order and branch picks (used by the balance sim to sample different play styles).
+func randomize_style(rng: RandomNumberGenerator) -> void:
+	var cycle: Array[String] = ["arrow", "mage", "frost", "barracks"]
+	for i in range(cycle.size() - 1, 0, -1):
+		var j := rng.randi_range(0, i)
+		var tmp := cycle[i]
+		cycle[i] = cycle[j]
+		cycle[j] = tmp
+	build_cycle = cycle
+	for k in branch_pref.keys():
+		branch_pref[k] = rng.randi_range(0, 1)
+	decision_interval = rng.randf_range(1.1, 2.2)
+
+
 func tick(delta: float, director: CoopTDDirector) -> void:
 	if director == null or delta <= 0.0:
 		return

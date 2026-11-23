@@ -28,12 +28,16 @@ signal wave_called(wave_index: int, bonus: int)
 signal countdown_started(seconds: float)
 
 const COMBO_RADIUS := 98.0
+## Global balance knobs (tuned with tests/balance_sim.gd; the sim can override them per run).
+static var tuning_hp_scale: float = 1.5
+static var tuning_bounty_share: float = 0.50
+static var tuning_wave_ramp: float = 0.20
 const SYNCHRO_WINDOW_SEC := 5.0
 const P1_COLOR := Color(0.55, 0.94, 1.0)
 const P2_COLOR := Color(1.0, 0.58, 0.58)
 
 const DIFFICULTIES: Dictionary = {
-	"casual": {"label": "休闲", "hp_mult": 0.78, "gold_add": 40, "lives_add": 5, "bounty_mult": 1.10, "countdown": 18.0},
+	"casual": {"label": "休闲", "hp_mult": 0.70, "gold_add": 40, "lives_add": 5, "bounty_mult": 1.10, "countdown": 18.0},
 	"normal": {"label": "普通", "hp_mult": 1.00, "gold_add": 0, "lives_add": 0, "bounty_mult": 1.00, "countdown": 14.0},
 	"hard": {"label": "困难", "hp_mult": 1.32, "gold_add": -20, "lives_add": -5, "bounty_mult": 0.92, "countdown": 11.0},
 }
@@ -128,7 +132,7 @@ func setup_stage(stage: Dictionary, meta_prog: MetaProgress = null, diff: String
 	engine.gold = 99999 # CoopTDDirector owns the P1/P2 wallets
 	engine.lives = max_lives
 	_bounty_mult = float(_diff["bounty_mult"])
-	_hp_mult = float(_diff["hp_mult"])
+	_hp_mult = float(_diff["hp_mult"]) * float(stage_def.get("hp_scale", 1.0)) * tuning_hp_scale
 
 	for ldef in stage_def.get("lanes", []):
 		var lane := TDPathLane.new()
@@ -213,8 +217,12 @@ func _init_creep(c: Dictionary, wave_index: int) -> void:
 	c["ab_timer"] = float(def.get("heal_interval", def.get("cry_interval", def.get("roar_interval", 0.0)))) * 0.6
 	c["summoned"] = false
 	c["is_boss"] = bool(def.get("is_boss", false))
+	var scale := 1.0
 	if endless and wave_index >= 0:
-		var scale := get_endless_hp_scale(wave_index)
+		scale = get_endless_hp_scale(wave_index)
+	elif wave_index > 0:
+		scale = 1.0 + float(stage_def.get("wave_hp_ramp", tuning_wave_ramp)) * float(wave_index)
+	if scale != 1.0:
 		c["hp"] = float(c["hp"]) * scale
 		c["max_hp"] = float(c["max_hp"]) * scale
 		c["shield"] = float(c.get("shield", 0.0)) * scale
@@ -293,7 +301,7 @@ func _tick_creep_abilities(delta: float) -> void:
 
 
 func _on_creep_killed(creep: Dictionary, bounty: int) -> void:
-	var share := maxi(1, int(ceil(float(bounty) * 0.60 * _bounty_mult)))
+	var share := maxi(1, int(ceil(float(bounty) * tuning_bounty_share * _bounty_mult)))
 	for pid in [1, 2]:
 		gold[pid] = int(gold[pid]) + share
 		stats[pid]["income"] = int(stats[pid]["income"]) + share

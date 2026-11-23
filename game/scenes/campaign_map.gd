@@ -7,6 +7,8 @@ const MAP_NODES: Array[Dictionary] = [
 	{"id": "stage_1_twin_bridge", "pos": Vector2(62, 166),  "icon_col": Color(0.32, 0.88, 0.48), "short": "1.翡翠双桥"},
 	{"id": "stage_2_rift_cross",  "pos": Vector2(132, 118), "icon_col": Color(0.82, 0.42, 1.0),  "short": "2.裂谷交叉"},
 	{"id": "stage_3_royal_siege", "pos": Vector2(192, 74),  "icon_col": Color(1.0, 0.36, 0.36),  "short": "3.王城终局"},
+	{"id": "stage_4_frost_trail", "pos": Vector2(196, 150), "icon_col": Color(0.70, 0.90, 1.0),  "short": "4.霜原雪径"},
+	{"id": "stage_5_abyss_corridor", "pos": Vector2(120, 176), "icon_col": Color(0.55, 0.25, 0.75), "short": "5.深渊回廊"},
 ]
 
 var _stars_lbl: Label
@@ -73,9 +75,9 @@ func _draw() -> void:
 		draw_texture_rect(_gate_tex, Rect2(Vector2(184, 46), Vector2(36, 38)), false)
 
 	# Dotted Marching Trail connecting Stage 1 -> Stage 2 -> Stage 3
-	for pair in [[MAP_NODES[0]["pos"], MAP_NODES[1]["pos"]], [MAP_NODES[1]["pos"], MAP_NODES[2]["pos"]]]:
-		var a: Vector2 = pair[0]
-		var b: Vector2 = pair[1]
+	for ni in range(MAP_NODES.size() - 1):
+		var a: Vector2 = MAP_NODES[ni]["pos"]
+		var b: Vector2 = MAP_NODES[ni + 1]["pos"]
 		for k in range(1, 7):
 			var p := a.lerp(b, float(k) / 7.0)
 			draw_circle(p, 1.8, Color(1.0, 0.92, 0.52, 0.85))

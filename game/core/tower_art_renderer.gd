@@ -39,6 +39,10 @@ static func get_biome_for_stage(stage_id: String) -> String:
 		return "rift"
 	if stage_id.contains("siege"):
 		return "siege"
+	if stage_id.contains("frost"):
+		return "snow"
+	if stage_id.contains("abyss"):
+		return "abyss"
 	return "bridge"
 
 
