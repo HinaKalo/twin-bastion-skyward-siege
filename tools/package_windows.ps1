@@ -17,5 +17,6 @@ $metadata = @(
 )
 Compress-Archive -LiteralPath $metadata -DestinationPath $bundle -CompressionLevel Optimal -Force
 $digest = (Get-FileHash -LiteralPath $bundle -Algorithm SHA256).Hash.ToLowerInvariant()
-"$digest  $(Split-Path $bundle -Leaf)" | Set-Content -LiteralPath (Join-Path $dist 'SHA256SUMS.txt') -Encoding ascii
+$checksum = "$digest  $(Split-Path $bundle -Leaf)" + [char]10
+[IO.File]::WriteAllText((Join-Path $dist 'SHA256SUMS.txt'), $checksum, [Text.Encoding]::ASCII)
 Write-Output $bundle
