@@ -1,8 +1,10 @@
 # 《双子堡垒：共守苍穹》 · Twin Bastion: Skyward Siege
 
+[![翡翠双桥、裂谷交叉、王城终局、霜原雪径和深渊回廊的战斗实机预览](.github/media/campaign-preview.gif)](https://github.com/HinaKalo/twin-bastion-skyward-siege/releases/download/v1.1.0/TwinBastionTD-Campaign.mp4)
+
 [![GitHub CI](https://github.com/HinaKalo/twin-bastion-skyward-siege/actions/workflows/ci.yml/badge.svg)](https://github.com/HinaKalo/twin-bastion-skyward-siege/actions/workflows/ci.yml)
 
-[下载 Windows 版](https://github.com/HinaKalo/twin-bastion-skyward-siege/releases/latest) · [源码许可 0BSD](LICENSE) · [素材与依赖说明](THIRD_PARTY_NOTICES.md)
+[下载 Windows 版](https://github.com/HinaKalo/twin-bastion-skyward-siege/releases/latest) · [五关完整演示（MP4）](https://github.com/HinaKalo/twin-bastion-skyward-siege/releases/download/v1.1.0/TwinBastionTD-Campaign.mp4) · [源码许可 0BSD](LICENSE) · [素材与依赖说明](THIRD_PARTY_NOTICES.md)
 
 基于 **Godot 4.7.2 + MoonRPG Engine** 的像素风 **双人合作塔防**。两名玩家各自管理金币、塔和英雄，相邻建塔触发跨玩家连携，能量满后两人同时按键才能释放合体奥义。
 
