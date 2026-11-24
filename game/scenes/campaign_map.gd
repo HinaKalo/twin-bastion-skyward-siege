@@ -34,12 +34,19 @@ func _ready() -> void:
 	_build_ui()
 	_refresh()
 	MoonRPG.play_bgm("bgm.village")
-	if not GameSession.meta.has_seen("prologue"):
+	if not GameSession.is_lan() and not GameSession.meta.has_seen("prologue"):
 		_story.play(StoryData.PROLOGUE, func(): GameSession.meta.mark_seen("prologue"))
 
 
 func _process(delta: float) -> void:
 	_t += delta
+	if GameSession.play_mode == GameSession.PlayMode.LAN_CLIENT:
+		_launch_btn.disabled = true
+		_launch_btn.text = "等待房主开战"
+	elif GameSession.play_mode == GameSession.PlayMode.LAN_HOST:
+		var valid := CampaignData.is_unlocked(_selected, GameSession.meta)
+		_launch_btn.disabled = not valid or GameSession.net.peers.size() < 2
+		_launch_btn.text = "等待搭档加入" if GameSession.net.peers.size() < 2 else "开始战斗"
 	queue_redraw()
 
 
@@ -244,8 +251,11 @@ func _talent_name(tid: String) -> String:
 func _launch() -> void:
 	if not CampaignData.is_unlocked(_selected, GameSession.meta):
 		return
-	GameSession.selected_stage_id = _selected
 	MoonRPG.play_sfx("sfx.ui_confirm")
+	if GameSession.is_lan():
+		GameSession.request_lan_match(_selected)
+		return
+	GameSession.selected_stage_id = _selected
 	SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn")
 
 

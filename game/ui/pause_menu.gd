@@ -13,6 +13,7 @@ var _settings_box: VBoxContainer
 var _help_box: Control
 var _first_button: Button
 var _settings_only: bool = false
+var pause_tree := true
 
 
 func _ready() -> void:
@@ -82,13 +83,13 @@ func _ready() -> void:
 		["P1 (鼠标 / 手柄1)", UIKit.P1],
 		["左键 塔位菜单 · 右键 移动英雄", UIKit.TEXT],
 		["Q 英雄技能 · T 支援50G · R 双星合体", UIKit.TEXT],
-		["Space 召唤波次 · F 加速 · Esc 暂停", UIKit.TEXT],
+		["Space 开波就绪 · F 加速 · Esc 暂停", UIKit.TEXT],
 		["WASD / 屏幕边缘 移动视角 · 滚轮缩放 · M 小地图", UIKit.TEXT],
 		["P2 (键盘右手区 / 手柄2)", UIKit.P2],
 		["方向键 移动光标 · Enter 菜单/确认", UIKit.TEXT],
-		["RShift 取消 · . 移动英雄", UIKit.TEXT],
+		["RShift 取消 · . 移动英雄 · Backspace 开波就绪", UIKit.TEXT],
 		["/ 英雄技能 · , 支援50G · RCtrl 合体", UIKit.TEXT],
-		["手柄：左摇杆光标 A确认 B取消", UIKit.TEXT_DIM],
+		["手柄：左摇杆光标 A确认 B取消 Back开波就绪", UIKit.TEXT_DIM],
 		["X技能 Y合体 RB英雄 LB支援 Start暂停 · 右摇杆移动视角", UIKit.TEXT_DIM],
 	]
 	for l in lines:
@@ -101,7 +102,8 @@ func _ready() -> void:
 func open() -> void:
 	_settings_only = false
 	visible = true
-	get_tree().paused = true
+	if pause_tree:
+		get_tree().paused = true
 	_show_section("main")
 
 
@@ -124,7 +126,8 @@ func _back() -> void:
 
 func close() -> void:
 	visible = false
-	get_tree().paused = false
+	if pause_tree:
+		get_tree().paused = false
 
 
 func _unhandled_input(event: InputEvent) -> void:

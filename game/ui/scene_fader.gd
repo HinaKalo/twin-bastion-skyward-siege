@@ -7,6 +7,10 @@ var _rect: ColorRect
 static var _busy: bool = false
 
 
+static func is_busy() -> bool:
+	return _busy
+
+
 static func go(tree: SceneTree, path: String, dur: float = 0.22) -> void:
 	if tree == null:
 		return

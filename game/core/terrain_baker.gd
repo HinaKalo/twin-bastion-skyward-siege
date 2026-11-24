@@ -90,7 +90,7 @@ static func gate_pos(stage_def: Dictionary) -> Vector2:
 	return Vector2(435, 136)
 
 
-static func draw_ground(canvas: CanvasItem, stage_def: Dictionary, biome: String, t: float) -> void:
+static func draw_ground(canvas: CanvasItem, stage_def: Dictionary, biome: String, t: float, portal_active: bool = false) -> void:
 	var c := _stage_cache(stage_def, biome)
 	canvas.draw_texture(c["tex"], Vector2.ZERO)
 	var ws := world_size(stage_def)
@@ -130,12 +130,12 @@ static func draw_ground(canvas: CanvasItem, stage_def: Dictionary, biome: String
 		canvas.draw_circle(bp + Vector2(0, -2), 14.0, Color(1.0, 0.55, 0.18, 0.10 + 0.04 * sin(t * 9.0 + bp.y)))
 		canvas.draw_colored_polygon(PackedVector2Array([bp + Vector2(-3, -1), bp + Vector2(3, -1), bp + Vector2(0, -8 + fl)]), Color(1.0, 0.48, 0.12))
 		canvas.draw_colored_polygon(PackedVector2Array([bp + Vector2(-1.5, -1), bp + Vector2(1.5, -1), bp + Vector2(0, -5 + fl * 0.5)]), Color(1.0, 0.94, 0.40))
-	# spawn portals that open inside the map (not on the edge)
-	if stage_def.has("graph"):
+	# The interior gate stays sealed until the authored breach.
+	if portal_active and stage_def.has("graph"):
 		var g: Dictionary = stage_def["graph"]
 		for sp in (g["spawns"] as Dictionary).keys():
 			var p: Vector2 = g["nodes"][g["spawns"][sp]]
-			if p.x > 40.0 and p.y > 30.0 and p.y < float(ws.y) - 30.0:
+			if sp == "portal":
 				for k in range(3):
 					var r := 6.0 + float(k) * 4.0 + sin(t * 3.0 + float(k)) * 1.5
 					canvas.draw_arc(p, r, t * (1.5 + k) , t * (1.5 + k) + TAU * 0.7, 18, Color(0.85, 0.40, 1.0, 0.7 - float(k) * 0.18), 1.5)
@@ -365,10 +365,28 @@ static func _bake(stage_def: Dictionary, biome: String) -> Dictionary:
 	var braziers: Array = []
 	var gate := gate_pos(stage_def)
 	_place_decor(img, stage_def, biome, road, water, chasm, rng, braziers, w, h, gate)
+	_paint_landmarks(img, stage_def)
 	_paint_castle(img, b["castle"], biome, Vector2i(int(gate.x), int(gate.y)), w, h)
 	if glow_pts.size() > 400:
 		glow_pts = glow_pts.slice(0, 400)
 	return {"tex": ImageTexture.create_from_image(img), "braziers": braziers, "glow_pts": glow_pts, "river": river_pts, "chasm": chasm_pts, "roads": roads}
+
+
+static func _paint_landmarks(img: Image, stage: Dictionary) -> void:
+	var sprites := {}
+	for mark in stage.get("landmarks", []):
+		var id := str(mark[0])
+		if not sprites.has(id):
+			var tex := load("res://game/art/battlefield/%s.png" % id) as Texture2D
+			if tex == null:
+				continue
+			var sprite := tex.get_image()
+			sprite.convert(Image.FORMAT_RGBA8)
+			sprites[id] = sprite
+		var sprite: Image = sprites[id]
+		var extent := sprite.get_size()
+		var foot := Vector2i(mark[1])
+		img.blend_rect(sprite, Rect2i(Vector2i.ZERO, extent), foot - Vector2i(extent.x / 2, extent.y - 3))
 
 
 static func _paving(kind: String, rc: Array, x: int, y: int, dn: float, hsh: float) -> Color:

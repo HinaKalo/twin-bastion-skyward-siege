@@ -44,6 +44,7 @@ func start_next_wave() -> Dictionary:
 			"remaining": int(g.get("count", 1)),
 			"interval": maxf(0.05, float(g.get("interval", 1.0))),
 			"timer": maxf(0.0, float(g.get("delay", 0.0))),
+			"started": false,
 			"wave_index": current_wave_index,
 		})
 	wave_started.emit(current_wave_index, str(w.get("name", "Wave %d" % (current_wave_index + 1))))
@@ -57,6 +58,7 @@ func tick(delta: float) -> void:
 		var g: Dictionary = _active_groups[i]
 		g["timer"] = float(g["timer"]) - delta
 		while float(g["timer"]) <= 0.0 and int(g["remaining"]) > 0:
+			g["started"] = true
 			g["remaining"] = int(g["remaining"]) - 1
 			enemy_spawn_requested.emit(str(g["enemy_id"]), str(g["lane_id"]), int(g["wave_index"]))
 			g["timer"] = float(g["timer"]) + float(g["interval"])
@@ -67,6 +69,14 @@ func tick(delta: float) -> void:
 		wave_spawning_finished.emit(current_wave_index)
 		if not has_next_wave():
 			all_waves_finished.emit()
+
+
+func pending_arrivals() -> Array[Dictionary]:
+	var arrivals: Array[Dictionary] = []
+	for g in _active_groups:
+		if not bool(g["started"]):
+			arrivals.append(g)
+	return arrivals
 
 
 func serialize() -> Dictionary:

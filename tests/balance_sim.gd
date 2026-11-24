@@ -47,16 +47,23 @@ func _run() -> void:
 			if only_diff != "" and diff != only_diff:
 				continue
 			var wins := 0
+			var times: Array[float] = []
 			for s in range(seeds):
 				var r := simulate(stage, diff, "duo", 1000 + s * 77)
 				_print_row(sid, diff, "duo", r)
 				if bool(r["won"]):
 					wins += 1
-			var need := seeds if diff == "casual" else (int(ceil(seeds * 0.75)) if diff == "normal" else 0)
+					times.append(float(r["time"]))
+			var need := seeds if diff == "casual" else (int(ceil(seeds * 0.75)) if diff == "normal" else 1)
 			if wins < need:
 				_failures.append("%s/%s: AI duo won only %d/%d (need %d)" % [sid, diff, wins, seeds, need])
 			if diff == "hard" and wins == seeds:
 				print("  note: %s hard won by every AI style" % sid)
+			if diff == "normal" and not times.is_empty():
+				times.sort()
+				var mid := times.size() / 2
+				var median := times[mid] if times.size() % 2 != 0 else (times[mid - 1] + times[mid]) * 0.5
+				print("  %s normal win median: %.1fs" % [sid, median])
 		if only_diff == "" or only_diff == "normal":
 			var idle := simulate(stage, "normal", "idle", 4242)
 			_print_row(sid, "normal", "idle", idle)
@@ -100,6 +107,13 @@ func simulate(stage: Dictionary, diff: String, mode: String, rng_seed: int, endl
 			ai.randomize_style(rng)
 	var t := 0.0
 	var first_called := false
+	var first_contact := [-1.0]
+	d.engine.creep_impacted.connect(func(_uid: String, _p: Vector2, _dmg: float, _kind: String):
+		if first_contact[0] < 0.0:
+			first_contact[0] = d.elapsed - 10.0
+	)
+	var phase_time := {}
+	var phase := ""
 	while t < MAX_SIM_SEC:
 		if mode == "duo":
 			ai1.tick(DT, d)
@@ -109,19 +123,25 @@ func simulate(stage: Dictionary, diff: String, mode: String, rng_seed: int, endl
 			first_called = true
 			d.call_next_wave()
 		d.tick(DT)
+		if first_called:
+			phase = d.get_wave_phase()
+			phase_time[phase] = float(phase_time.get(phase, 0.0)) + DT
 		t += DT
 		if d.is_victory() or d.is_defeat():
 			break
 	return {
 		"won": d.is_victory(), "lives": d.engine.lives, "max_lives": d.max_lives, "leaks": d.leaks,
-		"k1": int(d.stats[1]["kills"]), "k2": int(d.stats[2]["kills"]), "time": t,
+		"k1": int(d.stats[1]["kills"]), "k2": int(d.stats[2]["kills"]), "time": t - 10.0,
 		"wave": d.wave_dir.current_wave_index + 1, "waves": d.wave_dir.get_total_waves(),
 		"stars": MetaProgress.compute_stars(d.engine.lives, d.max_lives, diff, d.leaks) if d.is_victory() else 0,
 		"gold": [int(d.gold[1]), int(d.gold[2])],
 		"lost": int(d.stats[1]["towers_lost"]) + int(d.stats[2]["towers_lost"]),
+		"contact": first_contact[0], "tail": float(phase_time.get("清尾", 0.0)), "rest": float(phase_time.get("休整", 0.0)),
 	}
 
 
 func _print_row(sid: String, diff: String, mode: String, r: Dictionary) -> void:
 	var res := ("WIN %d★" % int(r["stars"])) if bool(r["won"]) else ("LOSE w%d/%d" % [int(r["wave"]), int(r["waves"])])
-	print("%-22s %-7s %-6s %-9s %2d/%-3d %-6d %4d/%-6d %5.0fs  lost %d" % [sid, diff, mode, res, int(r["lives"]), int(r["max_lives"]), int(r["leaks"]), int(r["k1"]), int(r["k2"]), float(r["time"]), int(r.get("lost", 0))])
+	print("%-22s %-7s %-6s %-9s %2d/%-3d %-6d %4d/%-6d %5.0fs  lost %d  contact %.1fs  tail %.0fs  rest %.0fs" % [
+		sid, diff, mode, res, int(r["lives"]), int(r["max_lives"]), int(r["leaks"]), int(r["k1"]), int(r["k2"]),
+		float(r["time"]), int(r["lost"]), float(r["contact"]), float(r["tail"]), float(r["rest"])])

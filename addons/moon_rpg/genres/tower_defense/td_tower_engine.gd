@@ -17,6 +17,9 @@ signal tower_placed(tower: Dictionary)
 signal tower_upgraded(tower: Dictionary)
 signal tower_sold(tower_uid: String, refund: int)
 signal tower_fired(tower: Dictionary, target_creep: Dictionary, damage: float)
+signal projectile_launched(shot: Dictionary)
+signal projectile_resolved(shot_id: int, pos: Vector2, kind: String, branch: String, hit: bool)
+signal creep_impacted(uid: String, pos: Vector2, damage: float, kind: String)
 signal chain_lightning_fired(points: Array)
 signal creep_spawned(creep: Dictionary)
 signal creep_killed(creep: Dictionary, bounty: int)
@@ -33,6 +36,10 @@ var creep_defs: Dictionary = {} # enemy_id -> def
 var towers: Dictionary = {} # uid -> tower instance dict
 var creeps: Array[Dictionary] = []
 var soldiers: Array[Dictionary] = [] # Barracks blockers & temporary reinforcements
+var projectile_combat := false
+var combat_rng: RandomNumberGenerator
+var _shots: Array[Dictionary] = []
+var _shot_id := 0
 
 var _uid_counter: int = 0
 
@@ -408,6 +415,7 @@ func tick(delta: float) -> void:
 	_cleanup_dead_creeps()
 
 	# 3. Tick ranged towers & fire at prioritized targets
+	_advance_shots(delta)
 	for t in towers.values():
 		if str(t["role"]) == "barracks":
 			continue
@@ -418,7 +426,10 @@ func tick(delta: float) -> void:
 		if target.is_empty():
 			continue
 		t["cooldown"] = 1.0 / maxf(0.1, float(t["fire_rate"]))
-		_apply_tower_hit(t, target)
+		if projectile_combat:
+			_launch_shot(t, target)
+		else:
+			_apply_tower_hit(t, target, target["pos"], _shot_damage(t))
 
 	_cleanup_dead_creeps()
 
@@ -466,17 +477,68 @@ func _select_target(tower: Dictionary) -> Dictionary:
 	return best
 
 
-func _apply_tower_hit(tower: Dictionary, primary: Dictionary) -> void:
+func _roll() -> float:
+	return combat_rng.randf() if combat_rng != null else randf()
+
+
+func _shot_damage(tower: Dictionary) -> float:
 	var dmg := float(tower["damage"])
-	if float(tower["crit_chance"]) > 0.0 and randf() <= float(tower["crit_chance"]):
+	if float(tower["crit_chance"]) > 0.0 and _roll() <= float(tower["crit_chance"]):
 		dmg *= 1.85
+	return dmg
+
+
+static func projectile_seconds(from: Vector2, to: Vector2, kind: String, branch: String = "") -> float:
+	var speeds := {"arrow": 380.0, "frost": 315.0, "mage": 320.0, "enemy_arrow": 300.0, "axe": 235.0, "bolt": 265.0}
+	var branches := {"sniper": 640.0, "repeater": 460.0, "inferno": 310.0}
+	return clampf(from.distance_to(to) / float(branches.get(branch, speeds.get(kind, 320.0))), 0.07, 0.38)
+
+
+func _launch_shot(tower: Dictionary, target: Dictionary) -> void:
+	_shot_id += 1
+	var origin: Vector2 = (tower["pos"] as Vector2) - Vector2(0, 18)
+	var dest: Vector2 = target["pos"]
+	var kind := str(tower["tower_id"])
+	var branch := str(tower.get("branch", ""))
+	var duration := projectile_seconds(origin, dest, kind, branch)
+	var shot := {"id": _shot_id, "tower_uid": tower["uid"], "target_uid": target["uid"],
+		"from": origin, "to": dest, "duration": duration, "kind": kind, "branch": branch}
+	_shots.append({"visual": shot, "tower": tower.duplicate(), "target": target,
+		"remaining": duration, "damage": _shot_damage(tower)})
+	projectile_launched.emit(shot)
+
+
+func _advance_shots(delta: float) -> void:
+	var i := 0
+	while i < _shots.size():
+		var shot: Dictionary = _shots[i]
+		var visual: Dictionary = shot["visual"]
+		var target: Dictionary = shot["target"]
+		var live := float(target["hp"]) > 0.0 and creeps.has(target)
+		if live:
+			visual["to"] = target["pos"]
+		shot["remaining"] = float(shot["remaining"]) - delta
+		if float(shot["remaining"]) > 0.00001:
+			i += 1
+			continue
+		_shots.remove_at(i)
+		var tower: Dictionary = shot["tower"]
+		var hit := live or float(tower["splash_radius"]) > 0.0
+		projectile_resolved.emit(int(visual["id"]), visual["to"], visual["kind"], visual["branch"], hit)
+		if hit:
+			_apply_tower_hit(tower, target if live else {}, visual["to"], float(shot["damage"]))
+		_cleanup_dead_creeps()
+
+
+func _apply_tower_hit(tower: Dictionary, primary: Dictionary, hit_pos: Vector2, dmg: float) -> void:
 	var dtype := str(tower["damage_type"])
 	var splash := float(tower["splash_radius"])
-	var hit_pos: Vector2 = primary["pos"]
+	var targets: Array[Dictionary] = []
 
-	tower_fired.emit(tower, primary, dmg)
-
-	var targets: Array[Dictionary] = [primary]
+	if not primary.is_empty():
+		targets.append(primary)
+		primary["last_hit_by"] = str(tower["uid"])
+		tower_fired.emit(tower, primary, dmg)
 	if splash > 0.0:
 		for c in creeps:
 			if c != primary and float(c["hp"]) > 0.0 and hit_pos.distance_to(c["pos"]) <= splash:
@@ -485,14 +547,14 @@ func _apply_tower_hit(tower: Dictionary, primary: Dictionary) -> void:
 
 	# Chain Lightning bounces!
 	var chains := int(tower["chain_count"])
-	if chains > 0:
-		var pts: Array = [tower["pos"], primary["pos"]]
+	if chains > 0 and not primary.is_empty():
+		var pts: Array = [primary["pos"]]
 		var last_c := primary
 		for _b in range(chains):
 			var next_c: Dictionary = {}
 			var best_d := 78.0
 			for c in creeps:
-				if not targets.has(c) and float(c["hp"]) > 0.0:
+				if not targets.has(c) and float(c["hp"]) > 0.0 and (not bool(c["is_flying"]) or bool(tower["can_hit_air"])):
 					var d := (last_c["pos"] as Vector2).distance_to(c["pos"])
 					if d < best_d:
 						best_d = d
@@ -506,14 +568,17 @@ func _apply_tower_hit(tower: Dictionary, primary: Dictionary) -> void:
 
 	for c in targets:
 		c["last_hit_by"] = str(tower["uid"])
+		var before := maxf(0.0, float(c["hp"])) + float(c.get("shield", 0.0))
 		apply_damage_to_creep(c, dmg, dtype)
+		var after := maxf(0.0, float(c["hp"])) + float(c.get("shield", 0.0))
+		creep_impacted.emit(str(c["uid"]), c["pos"], before - after, str(tower["tower_id"]))
 		if float(tower["slow_duration"]) > 0.0 and float(tower["slow_factor"]) < 1.0:
 			apply_status_to_creep(c, "slow", float(tower["slow_factor"]), float(tower["slow_duration"]))
 		if float(tower["dot_duration"]) > 0.0 and float(tower["dot_dps"]) > 0.0:
 			apply_status_to_creep(c, "dot", float(tower["dot_dps"]), float(tower["dot_duration"]))
 		if float(tower["shred_duration"]) > 0.0 and float(tower["shred_amount"]) > 0.0:
 			apply_status_to_creep(c, "shred", float(tower["shred_amount"]), float(tower["shred_duration"]))
-		if float(tower["stun_chance"]) > 0.0 and randf() <= float(tower["stun_chance"]):
+		if float(tower["stun_chance"]) > 0.0 and _roll() <= float(tower["stun_chance"]):
 			apply_status_to_creep(c, "stun", 1.0, float(tower["stun_duration"]))
 
 

@@ -33,6 +33,18 @@ var ult_comets: Array[Dictionary] = []
 var deaths: Array[Dictionary] = []
 var mote_area: Rect2 = Rect2(12, 34, 456, 200)
 var meteors: Array[Dictionary] = []
+var warnings: Array[Dictionary] = []
+
+
+func add_warning(kind: String, pos: Vector2, radius: float, duration: float) -> void:
+	var col := Color(0.63, 0.91, 1.0) if kind == "frost_roar" else UIKit.BAD
+	if kind == "reinforcement":
+		col = UIKit.P2
+	elif kind == "meteor":
+		col = UIKit.P1
+	elif kind == "summon" or kind == "bolt":
+		col = Color(0.88, 0.56, 1.0)
+	warnings.append({"pos": pos, "radius": radius, "total": duration, "left": duration, "color": col})
 
 
 func init_ambient_motes(biome: String, count: int = 24, area: Rect2 = Rect2(12, 34, 456, 200)) -> void:
@@ -65,22 +77,22 @@ func play_stage_intro(title: String, subtitle: String) -> void:
 
 func play_wave_banner(text: String) -> void:
 	wave_banner_text = text
-	wave_banner_timer = 2.2
+	wave_banner_timer = 1.7
 
 
 func play_boss_cutin(bname: String, subtitle: String, portrait: Texture2D, quote: String = "") -> void:
 	boss_cutin_quote = quote
-	boss_cutin_timer = 3.4 if quote != "" else 2.8
+	boss_cutin_timer = 2.7
 	boss_cutin_name = bname
 	boss_cutin_sub = subtitle
 	boss_cutin_tex = portrait
-	add_shake(0.55)
+	add_shake(0.24)
 
 
 func play_synchro_ultimate_cinematic(view: Rect2 = Rect2(65, 68, 330, 137)) -> void:
 	ult_cinematic_timer = 1.85
 	ult_comets.clear()
-	add_shake(0.95)
+	add_shake(0.25)
 	for i in range(14):
 		var is_blue := (i % 2 == 0)
 		var target := Vector2(randf_range(view.position.x, view.end.x), randf_range(view.position.y, view.end.y))
@@ -95,21 +107,7 @@ func play_synchro_ultimate_cinematic(view: Rect2 = Rect2(65, 68, 330, 137)) -> v
 		})
 
 
-func spawn_projectile(from_pos: Vector2, to_pos: Vector2, kind: String, branch: String = "") -> void:
-	var speed := 340.0 if kind == "arrow" else (260.0 if kind == "frost" else 290.0)
-	if kind == "enemy_arrow":
-		speed = 300.0
-	elif kind == "axe":
-		speed = 200.0
-	elif kind == "bolt":
-		speed = 240.0
-	if branch == "sniper":
-		speed = 620.0
-	elif branch == "repeater":
-		speed = 420.0
-	elif branch == "inferno":
-		speed = 230.0
-	var dist := maxf(1.0, from_pos.distance_to(to_pos))
+func spawn_projectile(from_pos: Vector2, to_pos: Vector2, kind: String, branch: String = "", shot: Dictionary = {}) -> void:
 	projectiles.append({
 		"from": from_pos,
 		"to": to_pos,
@@ -117,8 +115,33 @@ func spawn_projectile(from_pos: Vector2, to_pos: Vector2, kind: String, branch: 
 		"kind": kind,
 		"branch": branch,
 		"t": 0.0,
-		"dur": clampf(dist / speed, 0.06, 0.36),
+		"dur": float(shot.get("duration", TDTowerEngine.projectile_seconds(from_pos, to_pos, kind, branch))),
+		"shot": shot,
 	})
+
+
+func land_projectile(shot_id: int, to: Vector2, kind: String, branch: String, hit: bool) -> void:
+	for i in range(projectiles.size()):
+		if int(projectiles[i]["shot"].get("id", 0)) == shot_id:
+			projectiles.remove_at(i)
+			break
+	if hit:
+		_projectile_burst(to, kind, branch)
+
+
+func _projectile_burst(pos: Vector2, kind: String, branch: String) -> void:
+	var col := Color(0.55, 0.94, 1.0) if kind == "frost" else (Color(0.88, 0.50, 1.0) if kind == "mage" else Color(1.0, 0.90, 0.45))
+	if kind == "enemy_arrow" or kind == "axe":
+		col = Color(0.85, 0.80, 0.70)
+	elif kind == "bolt":
+		col = Color(0.75, 0.30, 1.0)
+		spawn_shockwave(pos, 16.0, col, 0.25)
+	if branch == "inferno":
+		col = Color(1.0, 0.55, 0.18)
+		spawn_shockwave(pos, 26.0, col, 0.25)
+	elif branch == "blizzard":
+		spawn_shockwave(pos, 30.0, Color(0.80, 0.96, 1.0), 0.28)
+	spawn_burst(pos, col, 6 if branch != "" else 4, 42.0, 20.0)
 
 
 func spawn_death(pos: Vector2, tex: Texture2D, size: float) -> void:
@@ -129,8 +152,8 @@ func play_meteor_volley(center: Vector2) -> void:
 	for i in range(7):
 		var off := Vector2(randf_range(-38.0, 38.0), randf_range(-26.0, 26.0)) if i > 0 else Vector2.ZERO
 		var target := center + off
-		meteors.append({"from": target + Vector2(-50.0, -110.0), "to": target, "t": 0.0, "dur": 0.32, "delay": float(i) * 0.07, "done": false})
-	add_shake(0.35)
+		meteors.append({"from": target + Vector2(-50.0, -110.0), "to": target, "t": 0.0,
+			"dur": CoopTDDirector.METEOR_IMPACT, "delay": float(i) * 0.04, "done": false})
 
 
 func spawn_lightning(from_pos: Vector2, to_pos: Vector2, col: Color = Color(0.76, 0.90, 1.0)) -> void:
@@ -146,6 +169,7 @@ func spawn_lightning(from_pos: Vector2, to_pos: Vector2, col: Color = Color(0.76
 
 
 func spawn_burst(pos: Vector2, col: Color, count: int = 8, speed: float = 55.0, gravity: float = 40.0) -> void:
+	count = mini(count, maxi(0, 240 - particles.size()))
 	for _i in range(count):
 		var ang := randf_range(0.0, TAU)
 		var spd := randf_range(speed * 0.4, speed)
@@ -165,6 +189,8 @@ func spawn_shockwave(pos: Vector2, max_r: float, col: Color, dur: float = 0.35) 
 
 
 func spawn_float_text(pos: Vector2, text: String, col: Color, font_size: int = 7) -> void:
+	if floating_texts.size() >= 36:
+		return
 	floating_texts.append({
 		"pos": pos + Vector2(randf_range(-6.0, 6.0), -10.0),
 		"vel": Vector2(randf_range(-6.0, 6.0), -26.0),
@@ -176,7 +202,11 @@ func spawn_float_text(pos: Vector2, text: String, col: Color, font_size: int = 7
 	})
 
 
-func tick(delta: float) -> void:
+func tick(delta: float, real_delta: float = -1.0) -> void:
+	var ui_dt := delta if real_delta < 0.0 else real_delta
+	intro_timer = maxf(0.0, intro_timer - ui_dt)
+	wave_banner_timer = maxf(0.0, wave_banner_timer - ui_dt)
+	boss_cutin_timer = maxf(0.0, boss_cutin_timer - ui_dt)
 	if delta <= 0.0:
 		return
 
@@ -188,11 +218,11 @@ func tick(delta: float) -> void:
 	else:
 		shake_offset = Vector2.ZERO
 
-	# Timers
-	intro_timer = maxf(0.0, intro_timer - delta)
-	wave_banner_timer = maxf(0.0, wave_banner_timer - delta)
-	boss_cutin_timer = maxf(0.0, boss_cutin_timer - delta)
 	ult_cinematic_timer = maxf(0.0, ult_cinematic_timer - delta)
+	for i in range(warnings.size() - 1, -1, -1):
+		warnings[i]["left"] = float(warnings[i]["left"]) - delta
+		if float(warnings[i]["left"]) <= 0.0:
+			warnings.remove_at(i)
 
 	# Ambient motes
 	for m in ambient_motes:
@@ -207,27 +237,18 @@ func tick(delta: float) -> void:
 	# Projectiles
 	for i in range(projectiles.size() - 1, -1, -1):
 		var pr: Dictionary = projectiles[i]
+		var shot: Dictionary = pr["shot"]
+		if not shot.is_empty():
+			pr["to"] = shot["to"]
 		pr["t"] = float(pr["t"]) + delta
 		var frac := clampf(float(pr["t"]) / float(pr["dur"]), 0.0, 1.0)
 		var base := (pr["from"] as Vector2).lerp(pr["to"] as Vector2, frac)
 		if str(pr["kind"]) == "arrow":
 			base.y -= sin(frac * PI) * 14.0 # crisp ballistic arc!
 		pr["pos"] = base
-		if frac >= 1.0:
-			var k := str(pr["kind"])
-			var br := str(pr.get("branch", ""))
-			var col := Color(0.55, 0.94, 1.0) if k == "frost" else (Color(0.88, 0.50, 1.0) if k == "mage" else Color(1.0, 0.90, 0.45))
-			if k == "enemy_arrow" or k == "axe":
-				col = Color(0.85, 0.80, 0.70)
-			elif k == "bolt":
-				col = Color(0.75, 0.30, 1.0)
-				spawn_shockwave(pr["to"], 16.0, col, 0.25)
-			if br == "inferno":
-				col = Color(1.0, 0.55, 0.18)
-				spawn_shockwave(pr["to"], 26.0, col, 0.25)
-			elif br == "blizzard":
-				spawn_shockwave(pr["to"], 30.0, Color(0.80, 0.96, 1.0), 0.28)
-			spawn_burst(pr["to"], col, 6 if br != "" else 5, 42.0, 20.0)
+		if (shot.is_empty() and frac >= 1.0) or float(pr["t"]) > float(pr["dur"]) + 0.4:
+			if shot.is_empty():
+				_projectile_burst(pr["to"], str(pr["kind"]), str(pr["branch"]))
 			projectiles.remove_at(i)
 
 	# Death pops
@@ -304,6 +325,14 @@ func tick(delta: float) -> void:
 
 
 func draw_world_fx(canvas: CanvasItem, font: Font) -> void:
+	for warning in warnings:
+		var ratio := clampf(float(warning["left"]) / float(warning["total"]), 0.0, 1.0)
+		var r := float(warning["radius"])
+		var col: Color = warning["color"]
+		canvas.draw_circle(warning["pos"], r, Color(col, 0.08 + (1.0 - ratio) * 0.07))
+		canvas.draw_arc(warning["pos"], r, 0.0, TAU, 40, Color(0.06, 0.09, 0.16, 0.70), 3.0)
+		canvas.draw_arc(warning["pos"], r, 0.0, TAU, 40, Color(col, 0.45), 1.0)
+		canvas.draw_arc(warning["pos"], r, -PI * 0.5, -PI * 0.5 + TAU * (1.0 - ratio), 40, col, 2.0)
 	# Ambient motes
 	for m in ambient_motes:
 		var a := 0.35 + 0.45 * absf(sin(float(m["phase"])))
@@ -427,52 +456,28 @@ func draw_world_fx(canvas: CanvasItem, font: Font) -> void:
 
 
 func draw_cinematic_overlays(canvas: CanvasItem, font: Font) -> void:
-	# 1. Synchro Ultimate sky darken (comets themselves are drawn in the world layer)
 	if ult_cinematic_timer > 0.0:
-		var dim_a := minf(0.52, ult_cinematic_timer * 0.55)
-		canvas.draw_rect(Rect2(0, 22, 480, 226), Color(0.06, 0.02, 0.14, dim_a))
-		# Dramatic Center Ult Banner
-		var band_a := clampf(ult_cinematic_timer / 0.5, 0.0, 1.0)
-		canvas.draw_rect(Rect2(0, 108, 480, 32), Color(0.18, 0.04, 0.30, 0.86 * band_a))
-		canvas.draw_line(Vector2(0, 108), Vector2(480, 108), Color(1.0, 0.72, 1.0, band_a), 2.0)
-		canvas.draw_line(Vector2(0, 140), Vector2(480, 140), Color(0.42, 0.90, 1.0, band_a), 2.0)
-		canvas.draw_string(font, Vector2(0, 129), "双星合体奥义 · 【苍穹双星陨落】", HORIZONTAL_ALIGNMENT_CENTER, 480, 12, Color(1.0, 0.95, 0.42, band_a))
-		PixelIcons.draw_icon(canvas, "meteor", Vector2(118, 124), 2, Color(1, 1, 1, band_a))
-		PixelIcons.draw_icon(canvas, "meteor", Vector2(362, 124), 2, Color(1, 1, 1, band_a))
-
-	# 2. Boss Warning Cut-In (crimson letterbox + portrait + taunt)
+		var a := minf(0.25, ult_cinematic_timer * 0.25)
+		canvas.draw_rect(Rect2(0, 22, 480, 2), Color(0.40, 0.68, 1.0, a + 0.1))
+		canvas.draw_rect(Rect2(0, 246, 480, 2), Color(1.0, 0.45, 0.68, a + 0.1))
 	if boss_cutin_timer > 0.0:
-		var total := 3.4 if boss_cutin_quote != "" else 2.8
-		var a := clampf(minf(boss_cutin_timer * 2.0, (total - boss_cutin_timer) * 4.0), 0.0, 1.0)
-		canvas.draw_rect(Rect2(0, 22, 480, 18), Color(0.04, 0.01, 0.02, 0.85 * a))
-		canvas.draw_rect(Rect2(0, 230, 480, 18), Color(0.04, 0.01, 0.02, 0.85 * a))
-		canvas.draw_rect(Rect2(0, 94, 480, 70), Color(0.32, 0.03, 0.06, 0.92 * a))
-		canvas.draw_line(Vector2(0, 94), Vector2(480, 94), Color(1.0, 0.28, 0.25, a), 2.0)
-		canvas.draw_line(Vector2(0, 164), Vector2(480, 164), Color(1.0, 0.28, 0.25, a), 2.0)
+		var a := clampf(minf(boss_cutin_timer * 3.0, (2.7 - boss_cutin_timer) * 7.0), 0.0, 1.0)
+		var r := Rect2(7, 26, 214 if boss_cutin_quote != "" else 151, 34)
+		canvas.draw_rect(r, Color(0.10, 0.04, 0.09, 0.94 * a))
+		canvas.draw_rect(r, Color(1.0, 0.30, 0.34, a), false, 1.0)
 		if boss_cutin_tex != null:
-			var slide := (1.0 - a) * -30.0
-			canvas.draw_texture_rect(boss_cutin_tex, Rect2(Vector2(84 + slide, 104), Vector2(48, 48)), false, Color(1, 1, 1, a))
-		PixelIcons.draw_icon(canvas, "skull", Vector2(150, 110), 1, Color(1, 1, 1, a))
-		canvas.draw_string(font, Vector2(158, 113), "强敌警报 · BOSS 来袭", HORIZONTAL_ALIGNMENT_LEFT, 280, 7, Color(1.0, 0.45, 0.35, a))
-		canvas.draw_string(font, Vector2(146, 130), boss_cutin_name, HORIZONTAL_ALIGNMENT_LEFT, 300, 12, Color(1.0, 0.95, 0.42, a))
-		if boss_cutin_quote != "":
-			var q := boss_cutin_quote if boss_cutin_quote.begins_with("（") else "「%s」" % boss_cutin_quote
-			canvas.draw_string(font, Vector2(146, 144), q, HORIZONTAL_ALIGNMENT_LEFT, 320, 8, Color(1.0, 0.92, 0.90, a))
-		canvas.draw_string(font, Vector2(146, 157), boss_cutin_sub, HORIZONTAL_ALIGNMENT_LEFT, 320, 6, Color(0.95, 0.72, 0.70, a))
-
-	# 3. Wave Slide-In Banner
+			canvas.draw_texture_rect(boss_cutin_tex, Rect2(12, 29, 27, 27), false, Color(1, 1, 1, a))
+		canvas.draw_string(font, Vector2(44, 39), boss_cutin_name, HORIZONTAL_ALIGNMENT_LEFT, 166, 9, Color(1, 0.87, 0.68, a))
+		var sub := boss_cutin_quote if boss_cutin_quote != "" else boss_cutin_sub
+		canvas.draw_string(font, Vector2(44, 51), sub, HORIZONTAL_ALIGNMENT_LEFT, 166, 6, Color(0.95, 0.77, 0.77, a))
 	elif wave_banner_timer > 0.0:
-		var a := clampf(minf(wave_banner_timer * 2.5, (2.2 - wave_banner_timer) * 4.0), 0.0, 1.0)
-		var slide := (1.0 - a) * 28.0
-		canvas.draw_rect(Rect2(90 + slide, 62, 300, 22), Color(0.08, 0.10, 0.22, 0.88 * a))
-		canvas.draw_rect(Rect2(90 + slide, 62, 300, 22), Color(1.0, 0.86, 0.35, a), false, 1.5)
-		canvas.draw_string(font, Vector2(90 + slide, 77), wave_banner_text, HORIZONTAL_ALIGNMENT_CENTER, 300, 9, Color(1.0, 0.95, 0.48, a))
-
-	# 4. Stage Intro Curtain
-	if intro_timer > 0.0:
-		var a := clampf(intro_timer / 0.7, 0.0, 1.0)
-		canvas.draw_rect(Rect2(0, 92, 480, 56), Color(0.04, 0.07, 0.16, 0.88 * a))
-		canvas.draw_line(Vector2(60, 94), Vector2(420, 94), Color(1.0, 0.88, 0.38, a), 1.5)
-		canvas.draw_line(Vector2(60, 146), Vector2(420, 146), Color(1.0, 0.88, 0.38, a), 1.5)
-		canvas.draw_string(font, Vector2(0, 118), intro_title, HORIZONTAL_ALIGNMENT_CENTER, 480, 12, Color(1.0, 0.94, 0.40, a))
-		canvas.draw_string(font, Vector2(0, 136), intro_sub, HORIZONTAL_ALIGNMENT_CENTER, 480, 8, Color(0.76, 0.90, 1.0, a))
+		var a := clampf(minf(wave_banner_timer * 3.0, (1.7 - wave_banner_timer) * 7.0), 0.0, 1.0)
+		var r := Rect2(7, 26, 151, 16)
+		canvas.draw_rect(r, Color(0.05, 0.07, 0.14, 0.90 * a))
+		canvas.draw_rect(r, Color(1.0, 0.86, 0.43, 0.65 * a), false, 1.0)
+		canvas.draw_string(font, Vector2(13, 37), wave_banner_text, HORIZONTAL_ALIGNMENT_LEFT, 139, 7, Color(1, 0.94, 0.6, a))
+	elif intro_timer > 0.0:
+		var a := clampf(intro_timer / 0.45, 0.0, 1.0)
+		canvas.draw_rect(Rect2(7, 26, 161, 27), Color(0.04, 0.07, 0.16, 0.9 * a))
+		canvas.draw_string(font, Vector2(14, 37), intro_title, HORIZONTAL_ALIGNMENT_LEFT, 148, 9, Color(1, 0.94, 0.4, a))
+		canvas.draw_string(font, Vector2(14, 47), intro_sub, HORIZONTAL_ALIGNMENT_LEFT, 148, 6, Color(0.76, 0.88, 1, a))

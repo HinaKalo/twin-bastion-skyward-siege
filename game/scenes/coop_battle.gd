@@ -14,10 +14,11 @@ const VIEW := Vector2(480, 270)
 const PAN_SPEED := 300.0
 const ZOOM_MIN := 0.45
 const ZOOM_MAX := 1.5
+const SIM_STEP := 1.0 / 60.0
 
 const TUTORIAL: Array[Dictionary] = [
 	{"text": "教程 1/5：点击发光的塔位，在环形菜单中选择一座防御塔", "goal": "build", "hud": ""},
-	{"text": "教程 2/5：点击下方【开战】或按 Space 召唤第一波敌人", "goal": "wave", "hud": "call_wave"},
+	{"text": "教程 2/5：按 Space 开波，同屏 P2 按 Backspace 就绪", "goal": "wave", "hud": "call_wave"},
 	{"text": "教程 3/5：右键点击道路，让英雄前去拦截敌人", "goal": "rally", "hud": ""},
 	{"text": "教程 4/5：敌人聚集时按 Q（或点技能按钮）释放【陨星箭雨】", "goal": "skill", "hud": "p1_skill"},
 	{"text": "教程 5/5：再次点击你的塔进行升级 —— 与搭档的塔相邻还能触发连携！", "goal": "upgrade", "hud": ""},
@@ -84,6 +85,13 @@ class _Overlay extends Control:
 		scene._draw_overlay(self)
 
 var _speed_mult: float = 1.0
+var _sim_debt := 0.0
+var _lan_version := 0
+var _lan_tick := 0.0
+var _lan_paused := false
+var _lan_finished := 0
+var _lan_fx: Array[Array] = []
+var _replica_positions := {}
 var _is_finished: bool = false
 var _flow_t: float = 0.0
 var _banner_ttl: float = 0.0
@@ -100,14 +108,25 @@ var _tip_idx: int = 0
 func _ready() -> void:
 	var stage := CampaignData.get_stage_by_id(GameSession.selected_stage_id)
 	biome = TowerArtRenderer.get_biome_for_stage(str(stage["id"]))
-	director.setup_stage(stage, GameSession.meta, GameSession.difficulty, GameSession.endless_mode)
+	var combat_meta := GameSession.meta
+	if _is_lan():
+		_lan_version = GameSession.lan_match
+		combat_meta = MetaProgress.new()
+		combat_meta.unlocked_talents = GameSession.lan_talents.duplicate()
+		GameSession.lan_state_received.connect(_apply_lan_state)
+		GameSession.lan_fx_received.connect(_play_remote_events)
+		GameSession.lan_lost.connect(_interrupt_battle)
+	director.setup_stage(stage, combat_meta, GameSession.difficulty, GameSession.endless_mode)
+	director.required_ready_seats = 1 if GameSession.is_ai_partner_enabled() else 2
 	world_size = stage.get("world", VIEW)
+	_user_zoom = 0.82 if stage.has("opening_view") else 1.0
+	_zoom = _user_zoom
 	camera = Camera2D.new()
 	camera.position_smoothing_enabled = false
 	add_child(camera)
 	camera.make_current()
 	var hs: Array = stage.get("hero_spawns", [])
-	_cam_center = (hs[0] as Vector2) + Vector2(-140, 20) if not hs.is_empty() else world_size * 0.5
+	_cam_center = stage.get("opening_view", (hs[0] as Vector2) if not hs.is_empty() else world_size * 0.5)
 	_apply_camera()
 	var ol := CanvasLayer.new()
 	ol.layer = 4
@@ -127,17 +146,19 @@ func _ready() -> void:
 	hud.local_seats = _local_seat_ids()
 	hud.portraits = {1: UnitArtRenderer.get_portrait(1), 2: UnitArtRenderer.get_portrait(2)}
 	hud.action.connect(_on_hud_action)
-	hud.minimap_clicked.connect(func(wp: Vector2): _cam_center = wp)
+	hud.minimap_clicked.connect(focus_camera)
 	hud.world_size = world_size
 	hud.road_polys = TerrainBaker.road_polylines(director.stage_def)
 	add_child(hud)
 	pause_menu = PauseMenu.new()
-	pause_menu.restart_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn"))
-	pause_menu.map_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/campaign_map.tscn"))
+	pause_menu.pause_tree = not _is_lan()
+	pause_menu.resume_requested.connect(func(): _lan_paused = false)
+	pause_menu.restart_requested.connect(_restart_battle)
+	pause_menu.map_requested.connect(_leave_battle)
 	add_child(pause_menu)
 	result_screen = ResultScreen.new()
-	result_screen.replay_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn"))
-	result_screen.map_requested.connect(func(): SceneFader.go(get_tree(), "res://game/scenes/campaign_map.tscn"))
+	result_screen.replay_requested.connect(_restart_battle)
+	result_screen.map_requested.connect(_leave_battle)
 	result_screen.next_requested.connect(_go_next_stage)
 	add_child(result_screen)
 
@@ -149,11 +170,6 @@ func _ready() -> void:
 	_start_stage_story(stage)
 	if str(stage["id"]) == "stage_1_twin_bridge" and not GameSession.meta.tutorial_done and not _is_lan() and not director.endless:
 		_tutorial_step = 0
-		for pad in director.pads:
-			if int(pad.get("owner_hint", 0)) == 1:
-				_cam_center = (pad["pos"] as Vector2) + Vector2(60, 30)
-				break
-		_apply_camera()
 	_refresh_hud_keys()
 
 
@@ -285,10 +301,12 @@ func _connect_signals() -> void:
 		if ai_enabled and by == 2:
 			_show_banner("AI 搭档请求【双星合体】！按 %s 响应！" % str(hud.keys[1]["ult"]), Color(1.0, 0.94, 0.3))
 	)
-	director.synchro_unleashed.connect(func(_h: int):
+	director.synchro_committed.connect(func():
+		_relay_event(["ult"])
 		vfx.play_synchro_ultimate_cinematic(_view_rect().grow(-30.0))
-		MoonRPG.play_sfx("sfx.quest_clear")
 	)
+	director.synchro_unleashed.connect(func(_h: int): MoonRPG.play_sfx("sfx.quest_clear"))
+	director.telegraph.connect(_on_telegraph)
 	director.hero_skill_cast.connect(_on_hero_skill_cast)
 	director.creep_ability.connect(_on_creep_ability)
 	director.combo_proc.connect(func(_k: String, pos: Vector2, col: Color):
@@ -318,6 +336,7 @@ func _connect_signals() -> void:
 	)
 	director.wave_called.connect(func(_wi: int, _bonus: int): _tutorial_goal("wave"))
 	director.wave_dir.wave_started.connect(func(wi: int, wname: String):
+		_relay_event(["wave", wname])
 		vfx.play_wave_banner(wname)
 		MoonRPG.play_sfx("sfx.door", -6.0)
 		if not director.endless:
@@ -325,22 +344,29 @@ func _connect_signals() -> void:
 	)
 	director.wave_dir.enemy_spawn_requested.connect(func(eid: String, _lid: String, _wi: int):
 		if CreepCatalog.is_boss(eid):
-			var bdef := CreepCatalog.get_def(eid)
-			var quote := "" if director.endless else StoryData.get_boss_line(str(director.stage_def["id"]), eid)
-			vfx.play_boss_cutin(str(bdef["name"]), str(bdef.get("cutin_sub", "")), _creep_texture(eid), quote)
-			MoonRPG.play_sfx("sfx.hurt")
+			_relay_event(["boss", eid])
+			_show_boss(eid)
 	)
-	director.engine.tower_fired.connect(func(t: Dictionary, tgt: Dictionary, dmg: float):
-		var tid := str(t["tower_id"])
-		vfx.spawn_projectile(t["pos"] as Vector2 - Vector2(0, 14), tgt["pos"] as Vector2, tid, str(t.get("branch", "")))
-		_hit_flash[str(tgt.get("uid", ""))] = 0.12
-		t["fire_anim"] = 0.18
-		if GameSettings.damage_numbers:
+	director.engine.projectile_launched.connect(func(shot: Dictionary):
+		_relay_event(["projectile", shot.duplicate()])
+		var t: Dictionary = director.engine.towers.get(shot["tower_uid"], {})
+		if not t.is_empty():
+			t["fire_anim"] = 0.18
+		vfx.spawn_projectile(shot["from"], shot["to"], shot["kind"], shot["branch"], shot)
+	)
+	director.engine.projectile_resolved.connect(func(id: int, pos: Vector2, kind: String, branch: String, hit: bool):
+		_relay_event(["impact", id, pos, kind, branch, hit])
+		vfx.land_projectile(id, pos, kind, branch, hit)
+	)
+	director.engine.creep_impacted.connect(func(uid: String, pos: Vector2, dmg: float, tid: String):
+		_relay_event(["damage", uid, pos, dmg])
+		_hit_flash[uid] = 0.10
+		if GameSettings.damage_numbers and dmg > 0.0:
 			var dcol := Color(0.76, 0.96, 1.0) if tid == "frost" else (Color(0.95, 0.65, 1.0) if tid == "mage" else Color(1.0, 0.96, 0.72))
-			vfx.spawn_float_text(tgt["pos"] as Vector2, str(int(round(dmg))), dcol, 6)
-		if _fire_sfx_cd <= 0.0:
-			_fire_sfx_cd = 0.07
-			AudioManager.play_sfx("sfx.magic" if tid != "arrow" else "sfx.swing_light", -16.0, 0.12)
+			vfx.spawn_float_text(pos, str(roundi(dmg)), dcol, 6)
+		if _fire_sfx_cd <= 0.0 and _view_rect().has_point(pos):
+			_fire_sfx_cd = 0.09
+			AudioManager.play_sfx("sfx.magic" if tid != "arrow" else "sfx.hit", -16.0, 0.12)
 	)
 	director.engine.chain_lightning_fired.connect(func(pts: Array):
 		for i in range(pts.size() - 1):
@@ -406,20 +432,39 @@ func _connect_signals() -> void:
 		GameSession.net.command_received.connect(_on_net_command)
 
 
+func _show_boss(eid: String) -> void:
+	var bdef := CreepCatalog.get_def(eid)
+	var quote := "" if director.endless else StoryData.get_boss_line(str(director.stage_def["id"]), eid)
+	vfx.play_boss_cutin(str(bdef["name"]), str(bdef.get("cutin_sub", "")), _creep_texture(eid), quote)
+	MoonRPG.play_sfx("sfx.hurt")
+
+
 func _on_hero_skill_cast(pid: int, _skill: String, pos: Vector2, _hits: int) -> void:
+	_relay_event(["skill", pid, pos])
 	if pid == 1:
+		vfx.add_warning("meteor", pos, float(CoopTDDirector.HERO_SKILLS[1]["radius"]), CoopTDDirector.METEOR_IMPACT)
 		vfx.play_meteor_volley(pos)
 		MoonRPG.play_sfx("sfx.magic", -2.0)
 	else:
-		vfx.spawn_shockwave(pos, 28.0, UIKit.GOLD, 0.4)
-		vfx.spawn_burst(pos, Color(1.0, 0.95, 0.70), 16, 60.0, -10.0)
-		vfx.spawn_float_text(pos - Vector2(0, 14), "圣盾援军!", UIKit.P2, 7)
-		MoonRPG.play_sfx("sfx.block", -2.0)
+		vfx.add_warning("reinforcement", pos, 22.0, CoopTDDirector.REINFORCEMENT_IMPACT)
 	_tutorial_goal("skill")
 
 
+func _on_telegraph(kind: String, pos: Vector2, radius: float, duration: float) -> void:
+	_relay_event(["telegraph", kind, pos, radius, duration])
+	vfx.add_warning(kind, pos, radius, duration)
+	_add_alert(pos)
+
+
 func _on_creep_ability(_c: Dictionary, ability: String, pos: Vector2) -> void:
+	_relay_event(["ability", ability, pos])
 	match ability:
+		"meteor_impact":
+			vfx.spawn_shockwave(pos, 38.0, UIKit.P1, 0.32)
+		"reinforcement_impact":
+			vfx.spawn_shockwave(pos, 28.0, UIKit.GOLD, 0.4)
+			vfx.spawn_burst(pos, Color(1.0, 0.95, 0.70), 16, 60.0, -10.0)
+			MoonRPG.play_sfx("sfx.block", -2.0)
 		"heal":
 			vfx.spawn_shockwave(pos, 50.0, Color(0.45, 1.0, 0.55), 0.45)
 			vfx.spawn_burst(pos, Color(0.5, 1.0, 0.6), 6, 25.0, -30.0)
@@ -447,6 +492,7 @@ func _shake(amount: float) -> void:
 
 
 func _show_banner(text: String, col: Color = Color(1.0, 0.94, 0.30)) -> void:
+	_relay_event(["banner", text, col])
 	if hud == null:
 		return
 	hud.banner_text = text
@@ -460,13 +506,21 @@ func _dispatch_cmd(cmd: Dictionary) -> void:
 	if _is_finished:
 		return
 	if _is_lan():
+		cmd["match"] = _lan_version
 		GameSession.net.send_command("td_cmd", cmd)
 	else:
 		_apply_cmd(cmd)
 
 
-func _on_net_command(_sender: int, cmd_type: String, payload: Dictionary) -> void:
-	if cmd_type == "td_cmd":
+func _on_net_command(sender: int, cmd_type: String, payload: Dictionary) -> void:
+	if int(payload.get("match", 0)) != _lan_version or _lan_version != GameSession.lan_match:
+		return
+	if cmd_type != "td_cmd" or GameSession.play_mode != GameSession.PlayMode.LAN_HOST:
+		return
+	if _is_finished or not GameSession.net.peers.has(sender):
+		return
+	payload["player_id"] = 1 if sender == 1 else 2
+	if not _lan_paused:
 		_apply_cmd(payload)
 
 
@@ -519,6 +573,8 @@ func _on_hud_action(id: String) -> void:
 
 
 func _cycle_speed() -> void:
+	if _is_replica() or _lan_paused:
+		return
 	_speed_mult = 2.0 if _speed_mult < 1.5 else (3.0 if _speed_mult < 2.5 else 1.0)
 	MoonRPG.play_sfx("sfx.ui_confirm", -8.0)
 
@@ -526,10 +582,14 @@ func _cycle_speed() -> void:
 func _open_pause() -> void:
 	if _is_finished or pause_menu.visible:
 		return
+	if _is_replica():
+		_show_banner("由房主暂停对局")
+		return
 	for pid in seats.keys():
 		_close_menu(seats[pid])
 		(seats[pid] as Seat).targeting = ""
 	queue_redraw()
+	_lan_paused = _is_lan()
 	pause_menu.open()
 
 
@@ -636,6 +696,8 @@ func _handle_key(k: InputEventKey) -> void:
 	if ks != null:
 		ks.pad_active = false
 		match k.keycode:
+			KEY_BACKSPACE:
+				_dispatch_cmd({"player_id": ks.pid, "action": "call_wave"})
 			KEY_ENTER, KEY_KP_ENTER:
 				_seat_confirm(ks, false)
 			KEY_SHIFT:
@@ -889,21 +951,30 @@ func _process(delta: float) -> void:
 	_flow_t += delta
 	_fire_sfx_cd -= delta
 	_kill_sfx_cd -= delta
-	var dt := delta * _speed_mult
-	vfx.tick(dt)
+	var dt := 0.0 if _lan_paused else delta * _speed_mult
+	vfx.tick(dt, delta)
 	_update_camera(delta)
 	for cuid in _hit_flash.keys():
-		_hit_flash[cuid] = maxf(0.0, float(_hit_flash[cuid]) - delta)
+		var remaining := float(_hit_flash[cuid]) - dt
+		if remaining <= 0.0:
+			_hit_flash.erase(cuid)
+		else:
+			_hit_flash[cuid] = remaining
 	for t in director.engine.towers.values():
 		if float(t.get("fire_anim", 0.0)) > 0.0:
 			t["fire_anim"] = maxf(0.0, float(t["fire_anim"]) - dt)
 		if float(t.get("hit_flash", 0.0)) > 0.0:
 			t["hit_flash"] = maxf(0.0, float(t["hit_flash"]) - delta)
 	_update_seat_motion(delta)
-	if not _is_finished:
-		director.tick(dt)
-		if ai_partner != null and GameSession.play_mode != GameSession.PlayMode.LAN_CLIENT:
-			ai_partner.tick(dt, director)
+	if _is_replica():
+		_smooth_replica(dt)
+	elif not _is_finished and not _lan_paused:
+		_sim_debt = minf(_sim_debt + dt, 0.2)
+		while _sim_debt >= SIM_STEP and not director.is_victory() and not director.is_defeat():
+			_sim_debt -= SIM_STEP
+			director.tick(SIM_STEP)
+			if ai_partner != null:
+				ai_partner.tick(SIM_STEP, director)
 		if director.is_victory():
 			_finish_stage(true)
 		elif director.is_defeat():
@@ -911,6 +982,9 @@ func _process(delta: float) -> void:
 		_update_music()
 	_update_guide(delta)
 	hud.speed_mult = _speed_mult
+	if GameSession.play_mode != GameSession.PlayMode.LAN_CLIENT:
+		hud.arrival_forecast = director.get_arrival_forecast()
+		_send_lan_frame(delta)
 	hud.refresh(delta)
 	queue_redraw()
 	overlay.queue_redraw()
@@ -931,6 +1005,7 @@ func _finish_stage(won: bool) -> void:
 	if _is_finished:
 		return
 	_is_finished = true
+	_lan_finished = 1 if won else 2
 	for pid in seats.keys():
 		_close_menu(seats[pid])
 		(seats[pid] as Seat).targeting = ""
@@ -961,7 +1036,7 @@ func _finish_stage(won: bool) -> void:
 		"has_next": next_idx > 0 and next_idx < ids.size() and not director.endless,
 		"story": story_line,
 	}
-	if won and StoryData.is_final_stage(sid) and not director.endless:
+	if won and StoryData.is_final_stage(sid) and not director.endless and not _is_lan():
 		story.play(StoryData.EPILOGUE, func():
 			meta.mark_seen("ending")
 			result_screen.show_result(data))
@@ -973,8 +1048,157 @@ func _go_next_stage() -> void:
 	var ids := CampaignData.get_stage_ids()
 	var next_idx := ids.find(str(director.stage_def["id"])) + 1
 	if next_idx > 0 and next_idx < ids.size():
+		if _is_lan():
+			GameSession.request_lan_match(ids[next_idx])
+			return
 		GameSession.selected_stage_id = ids[next_idx]
 		SceneFader.go(get_tree(), "res://game/scenes/coop_battle.tscn")
+
+
+func _restart_battle() -> void:
+	if _is_lan():
+		if not GameSession.request_lan_match(str(director.stage_def["id"])):
+			_show_banner("等待房主重新开始")
+	else:
+		SceneFader.go(get_tree(), GameSession.BATTLE_SCENE)
+
+
+func _leave_battle() -> void:
+	if _is_lan():
+		if _is_replica():
+			GameSession.leave_lan()
+			SceneFader.go(get_tree(), "res://game/scenes/title_lobby.tscn")
+		else:
+			GameSession.request_lan_map()
+	else:
+		SceneFader.go(get_tree(), GameSession.MAP_SCENE)
+
+
+func _is_replica() -> bool:
+	return GameSession.play_mode == GameSession.PlayMode.LAN_CLIENT
+
+
+func _interrupt_battle() -> void:
+	_is_finished = true
+	_show_banner(GameSession.lan_notice, UIKit.BAD)
+
+
+func _send_lan_frame(delta: float) -> void:
+	if GameSession.play_mode != GameSession.PlayMode.LAN_HOST or _lan_version != GameSession.lan_match:
+		return
+	_lan_tick += delta
+	if _lan_tick < 1.0 / 12.0:
+		return
+	_lan_tick = 0.0
+	if not _lan_fx.is_empty():
+		GameSession.push_lan_fx(_lan_version, _lan_fx)
+		_lan_fx.clear()
+	GameSession.push_lan_state({
+		"creeps": director.engine.creeps, "towers": director.engine.towers, "soldiers": director.engine.soldiers,
+		"lives": director.engine.lives, "pads": director.pads, "tower_owners": director.tower_owners,
+		"pad_to_tower_uid": director.pad_to_tower_uid, "heroes": director.heroes, "elapsed": director.elapsed,
+		"combo_links": director.combo_links, "gold": director.gold, "kills": director.kills,
+		"stats": director.stats, "leaks": director.leaks, "pings": director.active_pings,
+		"hero_skill_cd": director.hero_skill_cd, "synchro_charge": director.synchro_charge,
+		"synchro_pending_by": director.synchro_pending_by, "synchro_window_timer": director.synchro_window_timer,
+		"ready_seats": director.ready_seats, "countdown": director.wave_countdown, "rest": director.countdown_total,
+		"wave": director.wave_dir.current_wave_index, "wave_total": director.wave_dir.waves.size(),
+		"next_wave": director.get_next_wave_def(),
+		"spawning": director.wave_dir.is_spawning, "forecast": hud.arrival_forecast,
+		"finished": _lan_finished, "speed": _speed_mult, "paused": _lan_paused,
+		"portal": director.portal_opened,
+	})
+
+
+func _apply_lan_state(state: Dictionary) -> void:
+	if _lan_version != GameSession.lan_match or _is_finished:
+		return
+	_replica_positions.clear()
+	_update_replica_positions(director.engine.creeps, state["creeps"])
+	_update_replica_positions(director.engine.soldiers, state["soldiers"])
+	director.engine.creeps.assign(state["creeps"])
+	director.engine.towers = state["towers"]
+	director.engine.soldiers.assign(state["soldiers"])
+	director.engine.lives = state["lives"]
+	director.pads.assign(state["pads"])
+	director.active_pings.assign(state["pings"])
+	director.combo_links.assign(state["combo_links"])
+	director.wave_dir.waves.resize(state["wave_total"])
+	director.wave_dir.current_wave_index = state["wave"]
+	var next := director.wave_dir.current_wave_index + 1
+	if director.wave_dir.has_next_wave():
+		director.wave_dir.waves[next] = state["next_wave"]
+	director.wave_dir.is_spawning = state["spawning"]
+	director.portal_opened = state["portal"]
+	director.wave_countdown = state["countdown"]
+	director.countdown_total = state["rest"]
+	for field in ["tower_owners", "pad_to_tower_uid", "heroes", "elapsed", "gold", "kills", "stats", "leaks",
+			"hero_skill_cd", "synchro_charge", "synchro_pending_by", "synchro_window_timer", "ready_seats"]:
+		director.set(field, state[field])
+	hud.arrival_forecast = state["forecast"]
+	_speed_mult = state["speed"]
+	if bool(state["paused"]) != _lan_paused:
+		_lan_paused = state["paused"]
+		_show_banner("房主暂停了对局" if _lan_paused else "对局继续", UIKit.GOLD)
+	if int(state["finished"]) != 0:
+		_finish_stage(state["finished"] == 1)
+	else:
+		_update_music()
+
+
+func _update_replica_positions(previous: Array, incoming: Array) -> void:
+	var positions := {}
+	for actor in previous:
+		positions[actor["uid"]] = actor["pos"]
+	for actor in incoming:
+		var uid: String = actor["uid"]
+		_replica_positions[uid] = actor["pos"]
+		actor["pos"] = positions.get(uid, actor["pos"])
+
+
+func _smooth_replica(delta: float) -> void:
+	for actors in [director.engine.creeps, director.engine.soldiers]:
+		for actor in actors:
+			var pos: Vector2 = actor["pos"]
+			actor["pos"] = pos.lerp(_replica_positions.get(actor["uid"], pos), clampf(delta * 16.0, 0.0, 1.0))
+
+
+func _relay_event(event: Array) -> void:
+	if GameSession.play_mode == GameSession.PlayMode.LAN_HOST and _lan_fx.size() < 150:
+		_lan_fx.append(event)
+
+
+func _play_remote_events(events: Array) -> void:
+	if _lan_version == GameSession.lan_match:
+		for event in events:
+			_play_remote_event(event)
+
+
+func _play_remote_event(event: Array) -> void:
+	match str(event[0]):
+		"projectile":
+			var shot: Dictionary = event[1]
+			vfx.spawn_projectile(shot["from"], shot["to"], shot["kind"], shot["branch"], shot)
+		"impact":
+			vfx.land_projectile(event[1], event[2], event[3], event[4], event[5])
+		"damage":
+			_hit_flash[event[1]] = 0.10
+			if GameSettings.damage_numbers and float(event[3]) > 0.0:
+				vfx.spawn_float_text(event[2], str(roundi(event[3])), UIKit.TEXT, 6)
+		"wave":
+			vfx.play_wave_banner(str(event[1]))
+		"boss":
+			_show_boss(str(event[1]))
+		"ability":
+			_on_creep_ability({}, event[1], event[2])
+		"telegraph":
+			_on_telegraph(event[1], event[2], event[3], event[4])
+		"skill":
+			_on_hero_skill_cast(event[1], "", event[2], 0)
+		"ult":
+			vfx.play_synchro_ultimate_cinematic(_view_rect().grow(-30.0))
+		"banner":
+			_show_banner(event[1], event[2])
 
 
 # ================================================================== camera
@@ -1040,8 +1264,13 @@ func _update_camera(delta: float) -> void:
 			var rs := Vector2(Input.get_joy_axis(s.joy, JOY_AXIS_RIGHT_X), Input.get_joy_axis(s.joy, JOY_AXIS_RIGHT_Y))
 			if rs.length() > STICK_DEADZONE:
 				pan += rs
-	if pan.length() > 0.01:
+	var manual_pan := pan.length() > 0.01
+	if manual_pan:
 		_cam_center += pan.limit_length(1.0) * PAN_SPEED * delta / _zoom
+	var keep_view := manual_pan
+	for pid in [1, 2]:
+		var seat: Seat = seats[pid]
+		keep_view = keep_view or seat.menu != null or seat.targeting != ""
 	# keep keyboard / gamepad cursors on screen, zoom out when the two players spread apart
 	var focus: Array[Vector2] = []
 	for pid in [1, 2]:
@@ -1052,15 +1281,16 @@ func _update_camera(delta: float) -> void:
 			elif s.uses_mouse:
 				focus.append(s.cursor)
 	var want_zoom := _user_zoom
-	if focus.size() == 2:
+	if focus.size() == 2 and not keep_view:
 		var spread := (focus[0] - focus[1]).abs() + Vector2(70, 70)
 		var fit := minf(VIEW.x / spread.x, (PLAY_BOTTOM - PLAY_TOP) / spread.y)
 		want_zoom = clampf(minf(_user_zoom, fit), ZOOM_MIN, ZOOM_MAX)
-	_zoom = move_toward(_zoom, want_zoom, delta * 1.2)
+	if not keep_view:
+		_zoom = move_toward(_zoom, want_zoom, delta * 1.2)
 	var vr := _view_rect().grow(-18.0 / _zoom)
 	for pid in [1, 2]:
 		var s: Seat = seats[pid]
-		if s.human and not s.remote and (s.keyboard or (s.joy >= 0 and s.pad_active)):
+		if not keep_view and s.human and not s.remote and (s.keyboard or (s.joy >= 0 and s.pad_active)):
 			if s.cursor.x < vr.position.x:
 				_cam_center.x -= vr.position.x - s.cursor.x
 			elif s.cursor.x > vr.end.x:
@@ -1179,7 +1409,7 @@ func _creep_texture(eid: String) -> Texture2D:
 
 func _draw() -> void:
 	var font := UIKit.get_font()
-	TerrainBaker.draw_ground(self, director.stage_def, biome, _flow_t)
+	TerrainBaker.draw_ground(self, director.stage_def, biome, _flow_t, director.portal_is_active())
 	_draw_pads()
 	_draw_ranges()
 	_draw_combo_links()
@@ -1209,15 +1439,20 @@ func _draw_pads() -> void:
 			if s.hover_pad == i and (s.human and not s.remote):
 				var pr := 14.0 + 1.0 * sin(_flow_t * 6.0)
 				draw_arc(pp + Vector2(0, 1), pr, 0.0, TAU, 24, UIKit.pcol(spid), 1.5)
-	if _tutorial_step == 0:
-		for pad in director.pads:
-			if int(pad.get("owner_hint", 0)) == 1 and not director.pad_to_tower_uid.has(str(pad["id"])):
-				var p: Vector2 = pad["pos"]
-				var bob := sin(_flow_t * 5.0) * 2.5
-				draw_arc(p + Vector2(0, 1), 16.0 + 3.0 * absf(sin(_flow_t * 3.0)), 0.0, TAU, 28, UIKit.GOLD, 2.0)
-				draw_colored_polygon(PackedVector2Array([p + Vector2(-5, -30 + bob), p + Vector2(5, -30 + bob), p + Vector2(0, -22 + bob)]), UIKit.GOLD)
-				UIKit.draw_text(self, p + Vector2(-40, -33 + bob), "点击建塔", 7, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER, 80)
-				break
+	if director.wave_dir.current_wave_index < 0:
+		var opening: Array = director.stage_def.get("opening_pads", [])
+		for i in range(opening.size()):
+			var pid: String = opening[i]
+			if director.pad_to_tower_uid.has(pid):
+				continue
+			var pad := director._find_pad(pid)
+			var p: Vector2 = pad["pos"]
+			var bob := sin(_flow_t * 5.0 + i) * 2.5
+			var col := UIKit.pcol(i + 1)
+			draw_arc(p + Vector2(0, 1), 15.0 + 2.0 * absf(sin(_flow_t * 3.0)), 0.0, TAU, 28, col, 1.4)
+			draw_colored_polygon(PackedVector2Array([p + Vector2(-4, -22 + bob), p + Vector2(4, -22 + bob), p + Vector2(0, -16 + bob)]), col)
+			if i == 0 and _tutorial_step == 0:
+				UIKit.draw_text(self, p + Vector2(-40, -25 + bob), "点击建塔", 7, col, HORIZONTAL_ALIGNMENT_CENTER, 80)
 
 
 func _draw_ranges() -> void:
@@ -1279,14 +1514,17 @@ func _draw_combo_links() -> void:
 
 func _draw_actors() -> void:
 	var items: Array = []
+	var visible_area := _view_rect().grow(52)
 	for uid in director.engine.towers.keys():
 		var t: Dictionary = director.engine.towers[uid]
-		items.append({"y": (t["pos"] as Vector2).y + 4.0, "kind": 0, "ref": t})
+		if visible_area.has_point(t["pos"]):
+			items.append({"y": (t["pos"] as Vector2).y + 4.0, "kind": 0, "ref": t})
 	for s in director.engine.soldiers:
-		if float(s["hp"]) > 0.0:
+		if float(s["hp"]) > 0.0 and visible_area.has_point(s["pos"]):
 			items.append({"y": (s["pos"] as Vector2).y, "kind": 1, "ref": s})
 	for c in director.engine.creeps:
-		items.append({"y": (c["pos"] as Vector2).y + (30.0 if bool(c["is_flying"]) else 0.0), "kind": 2, "ref": c})
+		if visible_area.has_point(c["pos"]):
+			items.append({"y": (c["pos"] as Vector2).y + (30.0 if bool(c["is_flying"]) else 0.0), "kind": 2, "ref": c})
 	items.sort_custom(func(a, b): return float(a["y"]) < float(b["y"]))
 	for it in items:
 		match int(it["kind"]):
@@ -1310,63 +1548,42 @@ func _draw_soldier(s: Dictionary) -> void:
 		owner = director._owner_of_source(str(s.get("source_id", "")))
 		if owner == 0:
 			owner = 2 if bool(s.get("is_reinforcement", false)) else 1
-	UnitArtRenderer.draw_soldier(self, s, owner, is_hero, moving, target, _flow_t)
+	UnitArtRenderer.draw_soldier(self, s, owner, is_hero, moving, target, director.elapsed)
 
 
 func _draw_creep(c: Dictionary) -> void:
 	var flash := float(_hit_flash.get(str(c.get("uid", "")), 0.0)) > 0.0
-	UnitArtRenderer.draw_creep(self, c, flash, _flow_t)
+	UnitArtRenderer.draw_creep(self, c, flash, director.elapsed)
 
 
 func _draw_wave_preview() -> void:
-	var nxt := director.get_next_wave_def()
-	if nxt.is_empty() or director.wave_dir.is_spawning:
-		return
-	var by_lane := {}
-	for g in nxt.get("groups", []):
-		var lid := str(g["lane_id"])
-		if not by_lane.has(lid):
-			by_lane[lid] = []
-		if not (by_lane[lid] as Array).has(str(g["enemy_id"])):
-			(by_lane[lid] as Array).append(str(g["enemy_id"]))
-	var g: Dictionary = director.stage_def.get("graph", {})
-	if by_lane.has("random") and not g.is_empty():
-		var rnd: Array = by_lane["random"]
-		by_lane.erase("random")
-		for sp in (g["spawns"] as Dictionary).keys():
-			if not by_lane.has(sp):
-				by_lane[sp] = []
-			if not (by_lane[sp] as Array).has("?"):
-				(by_lane[sp] as Array).append("?")
-		if rnd.is_empty():
-			pass
-	for lid in by_lane.keys():
-		var p := Vector2.ZERO
-		if not g.is_empty() and g["spawns"].has(lid):
-			var node: Vector2 = g["nodes"][g["spawns"][lid]]
-			p = node + (Vector2(14, 0) if node.x < 40.0 else (Vector2(0, 14) if node.y < 40.0 else (Vector2(0, -14) if node.y > world_size.y - 40.0 else Vector2.ZERO)))
-		else:
-			var lane: TDPathLane = director.engine.lanes.get(lid, null)
-			if lane == null:
-				continue
-			p = lane.get_point_at_progress(0.0) + Vector2(12, 0)
-		var pulse := 1.0 + 0.12 * sin(_flow_t * 6.0)
-		draw_circle(p, 8.0 * pulse, Color(0.35, 0.05, 0.06, 0.9))
-		draw_arc(p, 8.0 * pulse, 0.0, TAU, 20, UIKit.BAD, 1.5)
-		if director.wave_countdown > 0.0:
-			var frac := director.wave_countdown / maxf(1.0, director.countdown_total)
-			draw_arc(p, 10.5, -PI * 0.5, -PI * 0.5 + TAU * frac, 24, UIKit.GOLD, 1.5)
+	var forecast := hud.arrival_forecast
+	for lane in forecast:
+		var entry: Dictionary = forecast[lane]
+		var p: Vector2 = entry["pos"]
+		if not _view_rect().grow(25).has_point(p):
+			continue
+		var seconds := float(entry["seconds"])
+		var warning: bool = lane == "portal" or (seconds <= 5.0 and director.wave_dir.current_wave_index >= 0)
+		var col := UIKit.BAD if warning else UIKit.GOLD
+		var pulse := 1.0 + 0.11 * sin(_flow_t * (8.0 if warning else 4.0))
+		draw_circle(p, 8.0 * pulse, UIKit.INK)
+		draw_arc(p, 8.0 * pulse, 0.0, TAU, 18, col, 1.2)
 		PixelIcons.draw_icon(self, "skull", p)
-		var ids: Array = by_lane[lid]
-		for k in range(mini(3, ids.size())):
-			var ip := p + Vector2(12 + k * 12, -6)
-			draw_rect(Rect2(ip, Vector2(11, 11)), Color(0.04, 0.04, 0.08, 0.85))
-			draw_rect(Rect2(ip, Vector2(11, 11)), Color(UIKit.BAD.r, UIKit.BAD.g, UIKit.BAD.b, 0.6), false, 1.0)
-			var eid := str(ids[k])
-			if eid == "?" or eid == "adaptive":
-				UIKit.draw_text(self, ip + Vector2(0, 9), "?", 8, UIKit.GOLD, HORIZONTAL_ALIGNMENT_CENTER, 11)
+		var x := p.x + 12.0
+		for eid in entry["enemies"]:
+			if x > p.x + 34.0:
+				break
+			var dest := Rect2(x, p.y - 7.0, 12, 12)
+			draw_rect(dest, UIKit.INK)
+			if eid == "adaptive":
+				UIKit.draw_text(self, dest.position + Vector2(0, 9), "?", 8, col, HORIZONTAL_ALIGNMENT_CENTER, 12)
 			else:
-				draw_texture_rect(_creep_texture(eid), Rect2(ip + Vector2(0.5, 0.5), Vector2(10, 10)), false)
+				var tex := _creep_texture(str(eid))
+				draw_texture_rect(tex, dest, false)
+			x += 13.0
+		if director.wave_dir.current_wave_index >= 0 and (director.wave_dir.is_spawning or director.wave_countdown > 0.0):
+			UIKit.draw_text(self, p + Vector2(12, 14), "%ds" % ceili(seconds), 7, col)
 
 
 func _draw_pings() -> void:

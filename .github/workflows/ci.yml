@@ -1,0 +1,129 @@
+name: CI and Windows releases
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GODOT_VERSION: 4.7.2
+  GODOT_EDITOR_SHA256: 731980f9608d61333e5baf54a2ef17210acc7a538446c0cb9969f002aca1e953
+  GODOT_TEMPLATES_SHA256: f298490b8d44d934be425a5a65a51bf15f422428b229a06a6e11d9ffea248011
+
+jobs:
+  verify-and-build:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Godot editor
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'twin-godot'
+          $archive = Join-Path $env:RUNNER_TEMP 'twin-godot.zip'
+          $file = "Godot_v$env:GODOT_VERSION-stable_win64.exe"
+          $base = "https://github.com/godotengine/godot-builds/releases/download/$env:GODOT_VERSION-stable"
+          curl.exe --silent --show-error --fail --location --retry 3 "$base/$file.zip" -o $archive
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ((Get-FileHash -LiteralPath $archive).Hash -ne $env:GODOT_EDITOR_SHA256) { throw 'Godot editor checksum mismatch' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $tools
+          $console = Get-ChildItem -LiteralPath $tools -Filter 'Godot*_win64_console.exe' -Recurse | Select-Object -First 1
+          if (!$console) { throw 'Godot console executable missing' }
+          New-Item -ItemType File -Path (Join-Path $console.DirectoryName '._sc_') | Out-Null
+          @('@echo off', ('"{0}" %*' -f $console.FullName)) | Set-Content -Path (Join-Path $console.DirectoryName 'godot.cmd') -Encoding ascii
+          $console.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          "GODOT_CONSOLE_EXE=$($console.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Import and run regression tests
+        run: |
+          godot --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          godot --headless --path . --import
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          godot --headless --path . --script res://tests/run_tests.gd
+          exit $LASTEXITCODE
+
+      - name: Test real ENet host and client
+        run: ./tools/check_lan.ps1 -Godot $env:GODOT_CONSOLE_EXE
+
+      - name: Install Windows export template
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'twin-templates.tpz'
+          $base = "https://github.com/godotengine/godot-builds/releases/download/$env:GODOT_VERSION-stable"
+          curl.exe --silent --show-error --fail --location --retry 3 "$base/Godot_v$env:GODOT_VERSION-stable_export_templates.tpz" -o $archive
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if ((Get-FileHash -LiteralPath $archive).Hash -ne $env:GODOT_TEMPLATES_SHA256) { throw 'Godot templates checksum mismatch' }
+          $dest = Join-Path (Split-Path $env:GODOT_CONSOLE_EXE -Parent) "editor_data/export_templates/$env:GODOT_VERSION.stable"
+          New-Item -ItemType Directory -Path $dest -Force | Out-Null
+          tar.exe -xf $archive -C $dest --strip-components 1 templates/windows_release_x86_64.exe templates/version.txt
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (!(Test-Path -LiteralPath (Join-Path $dest 'windows_release_x86_64.exe'))) { throw 'Release template missing' }
+
+      - name: Export and smoke-test Windows build
+        run: |
+          ./build_windows.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $log = Join-Path $env:RUNNER_TEMP 'twin-export.log'
+          $app = Start-Process -FilePath (Resolve-Path 'dist/TwinBastionTD.exe').Path -ArgumentList @('--headless', '--quit-after', '90', '--log-file', $log) -WindowStyle Hidden -PassThru
+          if (!$app.WaitForExit(40000)) { $app.Kill(); throw 'Export smoke test timed out' }
+          if ($app.ExitCode -ne 0) { throw "Export smoke test returned $($app.ExitCode)" }
+          Get-Content -LiteralPath $log
+          if (!(Select-String -LiteralPath $log -Pattern 'Godot Engine' -Quiet)) { throw 'No Godot startup in the export log' }
+          if (Select-String -LiteralPath $log -Pattern 'SCRIPT ERROR|Failed loading resource|Error loading .*json' -Quiet) { throw 'Export failed to load bundled resources' }
+
+      - name: Make versioned Windows zip
+        run: |
+          $match = Select-String -LiteralPath 'project.godot' -Pattern '^config/version="(\d+\.\d+\.\d+)"$'
+          if (!$match) { throw 'Project version missing' }
+          $tag = 'v' + $match.Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {
+            throw "Expected tag $tag for this commit"
+          }
+          ./tools/package_windows.ps1 -Tag $tag
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-x64
+          path: |
+            dist/*-win-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: verify-and-build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: windows-x64
+          path: release
+      - name: Publish verified Windows build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd release
+          sha256sum -c SHA256SUMS.txt
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --clobber ./*-win-x64.zip SHA256SUMS.txt
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "Twin Bastion: Skyward Siege $GITHUB_REF_NAME" \
+              --notes-file ../CHANGELOG.md ./*-win-x64.zip SHA256SUMS.txt
+          fi

@@ -23,6 +23,12 @@ const HINTS: Dictionary = {
 
 
 func _ready() -> void:
+	if GameSession.is_lan():
+		GameSession.leave_lan()
+	if not GameSession.lan_notice.is_empty():
+		_status = GameSession.lan_notice
+		_status_col = UIKit.BAD
+		GameSession.lan_notice = ""
 	for i in range(46):
 		_stars.append({"pos": Vector2(randf_range(4, 476), randf_range(4, 130)), "phase": randf_range(0, TAU), "big": randf() < 0.15})
 	for i in range(22):
@@ -120,7 +126,7 @@ func _hook_hint(b: Button, key: String) -> void:
 
 
 func _on_host_lan() -> void:
-	if GameSession.net.host_game(24560, 2, "P1_Host"):
+	if GameSession.net.host_game(24560, 1, "P1_Host"):
 		GameSession.play_mode = GameSession.PlayMode.LAN_HOST
 		GameSession.local_player_id = 1
 		_go_campaign()
@@ -208,7 +214,7 @@ func _draw() -> void:
 	var lx := 20.0
 	UIKit.draw_text(self, Vector2(lx, 42), "双子堡垒", 24, UIKit.GOLD)
 	UIKit.draw_text(self, Vector2(lx + 104, 42), "共守苍穹", 12, Color(0.80, 0.90, 1.0))
-	UIKit.draw_text(self, Vector2(lx + 2, 56), "TWIN BASTION  ·  2P CO-OP TOWER DEFENSE", 6, UIKit.TEXT_DIM)
+	UIKit.draw_text(self, Vector2(lx + 2, 56), "TWIN BASTION  ·  SKYWARD SIEGE", 6, UIKit.TEXT_DIM)
 	draw_rect(Rect2(lx, 62, 196, 1), UIKit.GOLD_DIM)
 	UIKit.draw_text(self, Vector2(lx, 74), "封印魔王的双星正在变暗，守塔的只有你们两个。", 7, UIKit.TEXT)
 	var meta := GameSession.meta

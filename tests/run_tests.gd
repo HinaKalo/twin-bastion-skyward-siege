@@ -96,9 +96,9 @@ func _progress_near(d: CoopTDDirector, pos: Vector2) -> Array:
 func _park_creep(d: CoopTDDirector, eid: String, pos: Vector2, hp: float = -1.0) -> Dictionary:
 	var lp := _progress_near(d, pos)
 	var c := d.engine.spawn_creep(eid, lp[0])
-	d._init_creep(c, 0)
 	c["progress"] = lp[1]
 	c["pos"] = (d.engine.lanes[lp[0]] as TDPathLane).get_point_at_progress(lp[1])
+	d._init_creep(c, 0)
 	c["speed"] = 0.0
 	c["base_speed"] = 0.0
 	if hp > 0.0:
@@ -123,6 +123,7 @@ func _run_all() -> void:
 	_test_wallets_and_combos()
 	_test_upgrades_and_branches()
 	_test_frost_and_overload()
+	_test_projectile_timing()
 	_test_fire_rate_survives_recompute()
 	_test_kill_attribution()
 	_test_enemy_abilities()
@@ -130,6 +131,7 @@ func _run_all() -> void:
 	_test_enemy_ai()
 	_test_monster_attacks()
 	_test_wave_flow()
+	_test_portal_warning()
 	_test_difficulty_and_endless()
 	_test_ai()
 	_test_presentation()
@@ -229,6 +231,26 @@ func _check_layout(s: Dictionary) -> void:
 			bad.append("spawn %s has no route" % sp)
 		if not (built["air"] as Dictionary).has(sp):
 			bad.append("spawn %s has no flight path" % sp)
+	var lead_group: Dictionary = s["waves"][0]["groups"][0]
+	var lead_speed := float(CreepCatalog.get_def(lead_group["enemy_id"])["speed"])
+	var recommended: Array[Vector2] = []
+	for pad in pads:
+		if s["opening_pads"].has(pad["id"]):
+			recommended.append(pad["pos"])
+	_assert_eq(recommended.size(), 2, "%s gives both seats an opening position" % sid)
+	for route in routes:
+		if str(route["spawn"]) != str(lead_group["lane_id"]):
+			continue
+		var lane := TDPathLane.new()
+		lane.setup(route["id"], route["points"])
+		var first := -1.0
+		for sample in range(161):
+			var seconds := float(sample) * 0.05
+			var pos := lane.get_point_at_progress(lane.advance_progress(0.0, lead_speed, seconds))
+			if recommended.any(func(p: Vector2): return p.distance_to(pos) <= 115.0):
+				first = seconds
+				break
+		_assert_true(first >= 3.9 and first <= 7.9, "%s opening arrow coverage starts within 4–8s" % route["id"])
 	for h in s.get("hero_spawns", []):
 		if MapGraph.dist_to_polylines(h, polys) > 30.0:
 			bad.append("hero spawn %s far from road" % str(h))
@@ -339,13 +361,30 @@ func _test_frost_and_overload() -> void:
 	var mid: Vector2 = ((d._find_pad(adj[0])["pos"] as Vector2) + (d._find_pad(adj[1])["pos"] as Vector2)) * 0.5
 	for i in range(4):
 		_park_creep(d, "shield_bearer", mid, 5000.0)
-	_tick(d, 3.0)
+	var mage := d.get_tower_at_pad(adj[1])
+	mage["cooldown"] = 1.0
+	_tick(d, 1.45)
 	var slowed := 0
 	for c in d.engine.creeps:
 		if float(c["slow_timer"]) > 0.0 and float(c["slow_factor"]) < 1.0:
 			slowed += 1
 	_assert_true(slowed > 0, "Frost tower actually slows enemies")
 	_assert_true(int(d.stats[1]["combo_procs"]) > 0, "Ice-Fire Overload procs on slowed targets")
+
+
+func _test_projectile_timing() -> void:
+	var d := _new_dir("stage_1_twin_bridge")
+	var pad := d.pads[0]
+	d.build_or_upgrade_pad(1, pad["id"], "arrow")
+	var c := _park_creep(d, "slime", pad["rally"], 5000.0)
+	var before := float(c["hp"])
+	d.engine.tick(0.01)
+	_assert_eq(float(c["hp"]), before, "A launched arrow leaves HP unchanged until arrival")
+	d.sell_pad(1, pad["id"])
+	d.engine.tick(0.4)
+	_assert_true(float(c["hp"]) < before, "An in-flight shot lands after its tower was sold")
+	_assert_true(d._owner_of_source(str(c["last_hit_by"])) == 1, "An in-flight shot retains its original owner")
+
 
 func _test_fire_rate_survives_recompute() -> void:
 	var d := _new_dir()
@@ -404,6 +443,9 @@ func _test_enemy_abilities() -> void:
 	boss["hp"] = float(boss["max_hp"]) * 0.45
 	var n_before := d.engine.creeps.size()
 	d._tick_creep_abilities(0.05)
+	_assert_eq(float(boss["shield"]), 0.0, "Obsidian windup precedes the shield")
+	d.elapsed += 0.8
+	d._land_effects()
 	_assert_true(float(boss["shield"]) > 0.0 and d.engine.creeps.size() > n_before, "Obsidian boss summons minions and raises a shield at half HP")
 
 	d.execute_command({"player_id": 1, "action": "build_or_upgrade", "pad_id": "p6", "tower_id": "arrow"})
@@ -413,6 +455,9 @@ func _test_enemy_abilities() -> void:
 	colossus["ab_timer"] = 0.0
 	var hp_before := float(d.get_tower_at_pad("p6")["hp"])
 	d._tick_creep_abilities(0.05)
+	_assert_eq(float(d.get_tower_at_pad("p6")["hp"]), hp_before, "Frost warning precedes tower damage")
+	d.elapsed += 1.0
+	d._land_effects()
 	_assert_true(float(d.get_tower_at_pad("p6")["frozen_timer"]) > 0.0, "Frost Colossus roar freezes nearby towers")
 	_assert_true(float(d.get_tower_at_pad("p6")["hp"]) < hp_before, "Frost Colossus roar damages nearby towers")
 
@@ -422,14 +467,18 @@ func _test_hero_skills() -> void:
 	var lane: TDPathLane = d.engine.lanes[_ground_lane(d)]
 	var spot := lane.get_point_at_progress(0.5)
 	for i in range(3):
-		var c := d.engine.spawn_creep("slime", _ground_lane(d))
-		c["pos"] = spot
+		_park_creep(d, "slime", spot)
+	var hp := float(d.engine.creeps[0]["hp"])
 	var r1 := d.execute_command({"player_id": 1, "action": "hero_skill", "x": spot.x, "y": spot.y})
-	_assert_true(bool(r1["ok"]) and int(r1["hits"]) == 3, "P1 meteor volley hits clustered enemies")
+	_assert_true(bool(r1["ok"]) and float(d.engine.creeps[0]["hp"]) == hp, "Meteor starts with a visible windup")
+	_tick(d, 0.4)
+	_assert_true(d.engine.creeps.is_empty() or float(d.engine.creeps[0]["hp"]) < hp, "P1 meteor volley hits clustered enemies")
 	_assert_true(not bool(d.execute_command({"player_id": 1, "action": "hero_skill", "x": spot.x, "y": spot.y})["ok"]), "Hero skill respects cooldown")
 	_assert_true(not bool(d.execute_command({"player_id": 2, "action": "hero_skill", "x": 6.0, "y": 6.0})["ok"]), "Reinforcements must be placed near a road")
 	var n_before := d.engine.soldiers.size()
-	_assert_true(bool(d.execute_command({"player_id": 2, "action": "hero_skill", "x": spot.x, "y": spot.y + 4.0})["ok"]) and d.engine.soldiers.size() == n_before + 2, "P2 reinforcements drop two blockers on the road")
+	_assert_true(bool(d.execute_command({"player_id": 2, "action": "hero_skill", "x": spot.x, "y": spot.y + 4.0})["ok"]) and d.engine.soldiers.size() == n_before, "P2 marks the reinforcement landing first")
+	_tick(d, 0.5)
+	_assert_eq(d.engine.soldiers.size(), n_before + 2, "P2 reinforcements drop two blockers on the road")
 
 func _test_enemy_ai() -> void:
 	# Cunning enemies avoid the route the players fortified
@@ -514,15 +563,24 @@ func _test_monster_attacks() -> void:
 	var archer := _park_creep(d, "goblin_archer", pad["rally"])
 	archer["atk_timer"] = 0.0
 	d._tick_creep_attacks(0.05)
+	_assert_eq(float(t["hp"]), full, "Archer winds up before damage")
+	d.elapsed += 0.3
+	d._land_effects()
+	_assert_eq(float(t["hp"]), full, "Archer launches before damage")
+	d.elapsed += 0.4
+	d._land_effects()
 	_assert_true(float(t["hp"]) < full, "Goblin archers shoot towers")
 	d.engine.creeps.clear()
 	var troll := _park_creep(d, "troll_breaker", pad["rally"])
+	troll["pos"] = (t["pos"] as Vector2).lerp(pad["rally"], 0.6)
 	troll["speed"] = 16.0
 	troll["base_speed"] = 16.0
 	troll["siege_timer"] = 0.0
 	var hp_mid := float(t["hp"])
 	d._tick_creep_attacks(0.05)
 	_assert_true(bool(troll.get("sieging", false)) and float(troll["speed"]) == 0.0, "Trolls stop to siege nearby towers")
+	d.elapsed += 0.5
+	d._land_effects()
 	_assert_true(float(t["hp"]) < hp_mid, "Troll smashes the tower")
 	d.engine.creeps.clear()
 	# repair
@@ -537,6 +595,7 @@ func _test_monster_attacks() -> void:
 	bat["pos"] = (t["pos"] as Vector2) + Vector2(30, -30)
 	var hp_b := float(t["hp"])
 	for i in range(40):
+		d.elapsed += 0.05
 		d._tick_creep_attacks(0.05)
 	_assert_true(float(t["hp"]) < hp_b, "Bomb bats dive into towers and explode")
 	_assert_true(d.engine.creeps.is_empty(), "Bomb bat dies in its own explosion")
@@ -561,18 +620,47 @@ func _test_wave_flow() -> void:
 	var d := _new_dir("stage_1_twin_bridge")
 	d.engine.lives = 999
 	_assert_eq(d.wave_countdown, -1.0, "First wave waits for the players")
-	d.call_next_wave()
+	d.required_ready_seats = 2
+	d.execute_command({"player_id": 1, "action": "call_wave"})
+	_assert_eq(d.wave_dir.current_wave_index, -1, "One seat cannot start a two-human wave")
+	d.execute_command({"player_id": 1, "action": "call_wave"})
+	d.execute_command({"player_id": 2, "action": "call_wave"})
+	_assert_eq(d.wave_dir.current_wave_index, -1, "A seat can withdraw readiness")
+	d.execute_command({"player_id": 1, "action": "call_wave"})
+	_assert_eq(d.wave_dir.current_wave_index, 0, "Both seats can start the first wave")
 	_tick(d, 12.0)
-	_assert_true(d.wave_countdown > 0.0, "Countdown starts after a wave finishes spawning")
+	_assert_eq(d.wave_countdown, -1.0, "Active attackers prevent the next countdown")
+	for i in range(200):
+		_tick(d, 0.5)
+		if d.wave_countdown > 0.0:
+			break
+	_assert_true(d.wave_countdown > 0.0, "Clearance starts recovery")
+	_assert_true(not d.can_ready_wave(), "Players receive the minimum recovery time")
+	_tick(d, 5.1)
 	_assert_true(d.get_early_call_bonus() > 0, "Calling early during countdown pays a bonus")
 	var g := int(d.gold[1])
 	var bonus := d.get_early_call_bonus()
-	d.call_next_wave()
+	d.request_wave(1)
+	_assert_eq(d.wave_dir.current_wave_index, 0, "Early start still requires both seats")
+	d.request_wave(2)
 	_assert_eq(d.wave_dir.current_wave_index, 1, "Early call starts wave 2")
 	_assert_eq(int(d.gold[1]), g + bonus, "Early-call bonus is paid to both players")
-	_tick(d, 12.0)
-	_tick(d, d.countdown_total + 0.5)
+	_tick(d, 135.0)
 	_assert_true(d.wave_dir.current_wave_index >= 2, "Countdown auto-starts the next wave")
+
+
+func _test_portal_warning() -> void:
+	var d := _new_dir("stage_5_abyss_corridor")
+	d.wave_dir.current_wave_index = 2
+	d.call_next_wave()
+	d.tick(0.05)
+	_assert_true(not d.portal_is_active(), "The first breach starts sealed")
+	var forecast := d.get_arrival_forecast()
+	_assert_true(forecast.has("portal") and float(forecast["portal"]["seconds"]) >= 5.0, "The first breach is forecast before it spawns")
+	_tick(d, 11.0)
+	_assert_true(not d.portal_is_active(), "Forecast does not open the portal early")
+	_tick(d, 1.5)
+	_assert_true(d.portal_is_active(), "The portal opens with its first enemy group")
 
 
 func _test_difficulty_and_endless() -> void:
@@ -738,7 +826,9 @@ func _test_battle_flow() -> void:
 
 	# HUD actions
 	scene._on_hud_action("call_wave")
-	_assert_eq(d.wave_dir.current_wave_index, 0, "HUD call-wave button starts wave 1")
+	_assert_eq(d.wave_dir.current_wave_index, -1, "First HUD confirmation waits for P2")
+	scene._handle_key(_key(KEY_BACKSPACE))
+	_assert_eq(d.wave_dir.current_wave_index, 0, "Second seat starts the wave")
 	var speed_before: float = scene._speed_mult
 	scene._on_hud_action("speed")
 	_assert_true(scene._speed_mult > speed_before, "HUD speed button speeds the game up")

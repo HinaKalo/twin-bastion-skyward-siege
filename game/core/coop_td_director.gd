@@ -30,6 +30,8 @@ signal creep_attack(creep: Dictionary, target_pos: Vector2, kind: String, damage
 signal tower_damaged(tower: Dictionary, damage: float)
 signal tower_destroyed(owner: int, pad_id: String, tower: Dictionary)
 signal adaptive_pick(enemy_id: String, reason: String)
+signal telegraph(kind: String, pos: Vector2, radius: float, duration: float)
+signal synchro_committed()
 
 const COMBO_RADIUS := 98.0
 ## Global balance knobs (tuned with tests/balance_sim.gd; the sim can override them per run).
@@ -91,6 +93,16 @@ var leaks: int = 0
 var elapsed: float = 0.0
 var wave_countdown: float = -1.0 # <0 = inactive
 var countdown_total: float = 14.0
+var required_ready_seats := 1
+var ready_seats: Dictionary = {}
+var portal_opened := false
+var _wave_prepared := -1
+var _enemy_shot_id := 0
+var _delayed: Array[Dictionary] = []
+const MIN_REST := 5.0
+const METEOR_IMPACT := 0.32
+const REINFORCEMENT_IMPACT := 0.40
+const SYNCHRO_IMPACT := 0.36
 var hero_skill_cd: Dictionary = {1: 0.0, 2: 0.0}
 var hero_skill_max: Dictionary = {1: 16.0, 2: 14.0}
 var heroes: Dictionary = {} # player_id -> hero soldier dict
@@ -136,6 +148,11 @@ func setup_stage(stage: Dictionary, meta_prog: MetaProgress = null, diff: String
 	elapsed = 0.0
 	wave_countdown = -1.0
 	countdown_total = float(_diff["countdown"])
+	ready_seats.clear()
+	portal_opened = false
+	_wave_prepared = -1
+	_delayed.clear()
+	_enemy_shot_id = 0
 	hero_skill_cd = {1: 0.0, 2: 0.0}
 	endless_best_wave = 0
 	stats = {1: _new_stats(), 2: _new_stats()}
@@ -150,6 +167,8 @@ func setup_stage(stage: Dictionary, meta_prog: MetaProgress = null, diff: String
 	_hp_mult = float(_diff["hp_mult"]) * float(stage_def.get("hp_scale", 1.0)) * tuning_hp_scale
 
 	rng.seed = randi()
+	engine.projectile_combat = true
+	engine.combat_rng = rng
 	routes.clear()
 	spawn_routes.clear()
 	air_routes.clear()
@@ -214,7 +233,7 @@ func setup_stage(stage: Dictionary, meta_prog: MetaProgress = null, diff: String
 		_ensure_endless_queue()
 	wave_dir.enemy_spawn_requested.connect(_on_spawn_requested)
 	wave_dir.all_waves_finished.connect(func(): all_waves_done = true)
-	wave_dir.wave_spawning_finished.connect(_on_wave_spawning_finished)
+	_prepare_next_wave()
 
 	engine.creep_killed.connect(_on_creep_killed)
 	engine.tower_fired.connect(_on_tower_fired)
@@ -271,6 +290,8 @@ func _on_spawn_requested(eid: String, lid: String, wi: int) -> void:
 	var c := engine.spawn_creep(eid, lane_id)
 	if c.is_empty():
 		return
+	if spawn == "portal":
+		portal_opened = true
 	c["spawn"] = spawn
 	_init_creep(c, wi)
 
@@ -471,29 +492,29 @@ func _tick_creep_attacks(delta: float) -> void:
 				var fired := false
 				for k in range(mini(int(ta.get("count", 1)), hits.size())):
 					var t: Dictionary = hits[k][1]
-					creep_attack.emit(c, t["pos"], str(ta["kind"]), float(ta["damage"]) * tdm)
-					_damage_tower(t, float(ta["damage"]) * tdm)
+					_windup_shot(c, t, str(ta["kind"]), float(ta["damage"]) * tdm, true)
 					fired = true
 				if not fired and bool(ta.get("soldiers", false)):
 					for s in engine.soldiers:
 						if float(s["hp"]) > 0.0 and (s["pos"] as Vector2).distance_to(cp) <= float(ta["range"]):
-							creep_attack.emit(c, s["pos"], str(ta["kind"]), float(ta["damage"]))
-							_damage_soldier(s, float(ta["damage"]))
+							_windup_shot(c, s, str(ta["kind"]), float(ta["damage"]), false)
 							fired = true
 							break
 				c["atk_timer"] = float(ta["interval"]) if fired else 0.3
 		var sg: Dictionary = def.get("siege", {})
 		if not sg.is_empty():
+			c["siege_grace"] = maxf(0.0, float(c.get("siege_grace", 0.0)) - delta)
 			var near := _towers_near(cp, float(sg["reach"]))
-			if not near.is_empty() and not stunned and str(c.get("blocked_by", "")) == "":
+			if not near.is_empty() and not stunned and float(c["siege_grace"]) <= 0.0 and str(c.get("blocked_by", "")) == "":
 				c["sieging"] = true
 				c["speed"] = 0.0
 				c["siege_timer"] = float(c.get("siege_timer", 0.8)) - delta
 				if float(c["siege_timer"]) <= 0.0:
 					c["siege_timer"] = float(sg["interval"])
 					var t: Dictionary = near[0][1]
-					creep_attack.emit(c, t["pos"], "smash", float(sg["damage"]) * tdm)
-					_damage_tower(t, float(sg["damage"]) * tdm)
+					_pose(c, "smash", t["pos"], 0.48)
+					telegraph.emit("smash", t["pos"], 16.0, 0.48)
+					_defer_effect(0.48, _land_siege.bind(c, t, float(sg["damage"]) * tdm))
 			elif bool(c.get("sieging", false)):
 				c["sieging"] = false
 				c["speed"] = float(c.get("base_speed", c["speed"]))
@@ -502,10 +523,15 @@ func _tick_creep_attacks(delta: float) -> void:
 			if not bool(c.get("diving", false)):
 				var near2 := _towers_near(cp, float(kz["seek"]))
 				if not near2.is_empty() and not stunned:
+					var target: Dictionary = near2[0][1]
 					c["diving"] = true
-					c["dive_target"] = str((near2[0][1] as Dictionary)["uid"])
+					c["dive_target"] = str(target["uid"])
 					c["stun_timer"] = 99.0
+					_pose(c, "dive", target["pos"], 0.40)
+					telegraph.emit("dive", target["pos"], float(kz["radius"]), 0.40 + cp.distance_to(target["pos"]) / maxf(1.0, float(c["base_speed"]) * 2.4))
 			else:
+				if elapsed < float(c.get("pose_until", 0.0)):
+					continue
 				var tgt: Dictionary = engine.towers.get(str(c.get("dive_target", "")), {})
 				if tgt.is_empty():
 					c["diving"] = false
@@ -523,6 +549,80 @@ func _tick_creep_attacks(delta: float) -> void:
 				else:
 					c["pos"] = cp + (aim - cp).normalized() * step
 	engine._cleanup_dead_creeps()
+
+
+func _defer_effect(seconds: float, action: Callable) -> void:
+	_delayed.append({"at": elapsed + seconds, "action": action})
+
+
+func _land_effects() -> void:
+	var i := 0
+	while i < _delayed.size():
+		var effect := _delayed[i]
+		if elapsed + 0.00001 < float(effect["at"]):
+			i += 1
+			continue
+		_delayed.remove_at(i)
+		(effect["action"] as Callable).call()
+
+
+func _pose(actor: Dictionary, kind: String, target: Vector2, duration: float) -> void:
+	actor["pose"] = kind
+	actor["pose_start"] = elapsed
+	actor["pose_until"] = elapsed + duration
+	actor["pose_target"] = target
+
+
+func _creep_can_finish(c: Dictionary) -> bool:
+	return float(c["hp"]) > 0.0 and float(c["stun_timer"]) <= 0.0 and engine.creeps.has(c)
+
+
+func _land_siege(c: Dictionary, target: Dictionary, damage: float) -> void:
+	if not _creep_can_finish(c) or not engine.towers.has(target["uid"]):
+		return
+	_pose(c, "strike", target["pos"], 0.20)
+	creep_attack.emit(c, target["pos"], "smash", damage)
+	_damage_tower(target, damage)
+	c["siege_strikes"] = int(c.get("siege_strikes", 0)) + 1
+	if int(c["siege_strikes"]) >= 2:
+		c["siege_strikes"] = 0
+		c["siege_grace"] = 2.0
+
+
+func _windup_shot(c: Dictionary, target: Dictionary, kind: String, damage: float, is_tower: bool) -> void:
+	var windup := 0.25 if kind == "arrow" else 0.60
+	_pose(c, "draw", target["pos"], windup)
+	if kind != "arrow":
+		telegraph.emit(kind, target["pos"], 14.0, windup)
+	_defer_effect(windup, _launch_enemy_shot.bind(c, target, kind, damage, is_tower))
+
+
+func _launch_enemy_shot(c: Dictionary, target: Dictionary, kind: String, damage: float, is_tower: bool) -> void:
+	if not _creep_can_finish(c) or not _valid_enemy_target(target, is_tower):
+		return
+	_enemy_shot_id -= 1
+	_pose(c, "strike", target["pos"], 0.20)
+	var origin: Vector2 = (c["pos"] as Vector2) - Vector2(0, 9)
+	var dest: Vector2 = target["pos"]
+	var projectile := "enemy_arrow" if kind == "arrow" else kind
+	var duration := TDTowerEngine.projectile_seconds(origin, dest, projectile)
+	engine.projectile_launched.emit({"id": _enemy_shot_id, "tower_uid": "", "target_uid": target["uid"], "from": origin,
+		"to": dest, "duration": duration, "kind": projectile, "branch": ""})
+	_defer_effect(duration, _land_enemy_shot.bind(_enemy_shot_id, target, projectile, damage, is_tower))
+
+
+func _valid_enemy_target(target: Dictionary, is_tower: bool) -> bool:
+	return float(target["hp"]) > 0.0 and (engine.towers.has(target["uid"]) if is_tower else engine.soldiers.has(target))
+
+
+func _land_enemy_shot(id: int, target: Dictionary, kind: String, damage: float, is_tower: bool) -> void:
+	var valid := _valid_enemy_target(target, is_tower)
+	engine.projectile_resolved.emit(id, target["pos"], kind, "", valid)
+	if valid:
+		if is_tower:
+			_damage_tower(target, damage)
+		else:
+			_damage_soldier(target, damage)
 
 
 func _damage_soldier(s: Dictionary, dmg: float) -> void:
@@ -669,13 +769,9 @@ func _tick_creep_abilities(delta: float) -> void:
 		if ability == "summon_shield":
 			if not bool(c.get("summoned", false)) and float(c["hp"]) <= float(c["max_hp"]) * 0.5:
 				c["summoned"] = true
-				var sh := float(def.get("summon_shield", 200.0)) * _hp_mult
-				c["shield"] = sh
-				c["max_shield"] = sh
-				for k in range(int(def.get("summon_count", 4))):
-					_spawn_at_progress(str(def.get("summon_id", "slime")), str(c["lane_id"]), float(c["progress"]) - 0.015 * float(k + 1))
-				creep_ability.emit(c, "summon", cp)
-				banner_event.emit("⚠ %s 展开黑曜护盾并召唤仆从！用魔法击碎护盾！" % CreepCatalog.get_display_name(str(c["enemy_id"])), Color(1.0, 0.45, 0.35))
+				_pose(c, "summon", cp, 0.75)
+				telegraph.emit("summon", cp, 38.0, 0.75)
+				_defer_effect(0.75, _resolve_boss_move.bind(c, ability, cp))
 			continue
 		c["ab_timer"] = float(c.get("ab_timer", 0.0)) - delta
 		if float(c["ab_timer"]) > 0.0:
@@ -692,20 +788,46 @@ func _tick_creep_abilities(delta: float) -> void:
 					creep_ability.emit(c, "heal", cp)
 			"war_cry":
 				c["ab_timer"] = float(def.get("cry_interval", 6.5))
-				for o in engine.creeps:
-					if o != c and float(o["hp"]) > 0.0 and cp.distance_to(o["pos"]) <= float(def.get("cry_radius", 64.0)):
-						o["haste_timer"] = float(def.get("cry_duration", 3.0))
-						o["haste_mult"] = float(def.get("cry_haste", 1.4))
-				creep_ability.emit(c, "war_cry", cp)
+				_pose(c, ability, cp, 0.60)
+				telegraph.emit(ability, cp, float(def.get("cry_radius", 64.0)), 0.60)
+				_defer_effect(0.60, _resolve_boss_move.bind(c, ability, cp))
 			"frost_roar":
 				c["ab_timer"] = float(def.get("roar_interval", 8.0))
-				var freeze := float(def.get("roar_freeze", 2.2))
-				for t in engine.towers.values().duplicate():
-					if (t["pos"] as Vector2).distance_to(cp) <= float(def.get("roar_radius", 96.0)):
-						t["cooldown"] = maxf(float(t["cooldown"]), freeze)
-						t["frozen_timer"] = freeze
-						_damage_tower(t, float(def.get("roar_damage", 0.0)) * float(_diff.get("tower_dmg", 1.0)))
-				creep_ability.emit(c, "frost_roar", cp)
+				_pose(c, ability, cp, 0.95)
+				telegraph.emit(ability, cp, float(def.get("roar_radius", 96.0)), 0.95)
+				_defer_effect(0.95, _resolve_boss_move.bind(c, ability, cp))
+
+
+func _resolve_boss_move(c: Dictionary, ability: String, center: Vector2) -> void:
+	if not _creep_can_finish(c):
+		if ability == "summon_shield":
+			c["summoned"] = false
+		return
+	var def := CreepCatalog.get_def(str(c["enemy_id"]))
+	_pose(c, "strike", center, 0.24)
+	match ability:
+		"summon_shield":
+			var shield := float(def.get("summon_shield", 200.0)) * _hp_mult
+			c["shield"] = shield
+			c["max_shield"] = shield
+			for k in range(int(def.get("summon_count", 4))):
+				_spawn_at_progress(str(def.get("summon_id", "slime")), str(c["lane_id"]), float(c["progress"]) - 0.015 * float(k + 1))
+			creep_ability.emit(c, "summon", c["pos"])
+			banner_event.emit("黑曜护盾已展开，魔法可击碎护盾", Color(1.0, 0.45, 0.35))
+		"war_cry":
+			for other in engine.creeps:
+				if other != c and float(other["hp"]) > 0.0 and center.distance_to(other["pos"]) <= float(def.get("cry_radius", 64.0)):
+					other["haste_timer"] = float(def.get("cry_duration", 3.0))
+					other["haste_mult"] = float(def.get("cry_haste", 1.4))
+			creep_ability.emit(c, ability, center)
+		"frost_roar":
+			var freeze := float(def.get("roar_freeze", 2.2))
+			for pair in _towers_near(center, float(def.get("roar_radius", 96.0))):
+				var t: Dictionary = pair[1]
+				t["cooldown"] = maxf(float(t["cooldown"]), freeze)
+				t["frozen_timer"] = freeze
+				_damage_tower(t, float(def.get("roar_damage", 0.0)) * float(_diff.get("tower_dmg", 1.0)))
+			creep_ability.emit(c, ability, center)
 
 
 func _on_creep_killed(creep: Dictionary, bounty: int) -> void:
@@ -750,7 +872,7 @@ func _owner_of_source(src: String) -> int:
 
 func _on_tower_fired(tower: Dictionary, target: Dictionary, dmg: float) -> void:
 	var tuid := str(tower["uid"])
-	var owner := int(tower_owners.get(tuid, 0))
+	var owner := _owner_of_source(tuid)
 	if owner != 0:
 		stats[owner]["damage"] = float(stats[owner]["damage"]) + dmg
 	var combo_mult := 1.25 if _has_talent("combo_power") else 1.0
@@ -1080,31 +1202,38 @@ func cast_hero_skill(player_id: int, pos: Vector2) -> Dictionary:
 	if float(hero_skill_cd.get(player_id, 0.0)) > 0.0:
 		return {"ok": false, "reason": "技能冷却中(%.0fs)" % float(hero_skill_cd[player_id])}
 	var sk: Dictionary = HERO_SKILLS[player_id]
-	var hits := 0
-	if player_id == 1:
-		var r := float(sk["radius"])
-		for c in engine.creeps:
-			if float(c["hp"]) > 0.0 and pos.distance_to(c["pos"]) <= r:
-				c["last_hit_by"] = "__p1_skill__"
-				engine.apply_damage_to_creep(c, float(sk["damage"]), "magic")
-				engine.apply_status_to_creep(c, "burn", 12.0, 3.0)
-				hits += 1
-		engine._cleanup_dead_creeps()
-	else:
+	var windup := METEOR_IMPACT
+	if player_id == 2:
 		var snap := _nearest_lane_point(pos)
 		if snap.distance_to(pos) > 40.0:
 			return {"ok": false, "reason": "援军需要部署在道路附近"}
+		pos = snap
+		windup = REINFORCEMENT_IMPACT
+	if heroes.has(player_id):
+		_pose(heroes[player_id], "cast", pos, windup)
+	hero_skill_cd[player_id] = float(hero_skill_max[player_id])
+	stats[player_id]["skill_casts"] = int(stats[player_id]["skill_casts"]) + 1
+	hero_skill_cast.emit(player_id, str(sk["id"]), pos, 0)
+	_defer_effect(windup, _resolve_hero_skill.bind(player_id, pos))
+	return {"ok": true, "pos": pos}
+
+
+func _resolve_hero_skill(player_id: int, pos: Vector2) -> void:
+	var sk: Dictionary = HERO_SKILLS[player_id]
+	if player_id == 1:
+		for c in engine.creeps:
+			if float(c["hp"]) > 0.0 and pos.distance_to(c["pos"]) <= float(sk["radius"]):
+				c["last_hit_by"] = "__p1_skill__"
+				engine.apply_damage_to_creep(c, float(sk["damage"]), "magic")
+				engine.apply_status_to_creep(c, "burn", 12.0, 3.0)
+		engine._cleanup_dead_creeps()
+	else:
 		for k in range(2):
-			var s := engine.spawn_temporary_blocker(snap + Vector2(-8 + 16 * k, 0), float(sk["hp"]), float(sk["atk"]), float(sk["lifetime"]), 1)
+			var s := engine.spawn_temporary_blocker(pos + Vector2(-8 + 16 * k, 0), float(sk["hp"]), float(sk["atk"]), float(sk["lifetime"]), 1)
 			s["owner_tower"] = "__p2_skill__"
 			s["source_id"] = "__p2_skill__"
 			s["is_reinforcement"] = true
-		pos = snap
-		hits = 2
-	hero_skill_cd[player_id] = float(hero_skill_max[player_id])
-	stats[player_id]["skill_casts"] = int(stats[player_id]["skill_casts"]) + 1
-	hero_skill_cast.emit(player_id, str(sk["id"]), pos, hits)
-	return {"ok": true, "hits": hits, "pos": pos}
+	creep_ability.emit({}, "meteor_impact" if player_id == 1 else "reinforcement_impact", pos)
 
 
 func trigger_synchro_ult(player_id: int) -> Dictionary:
@@ -1121,22 +1250,27 @@ func trigger_synchro_ult(player_id: int) -> Dictionary:
 		synchro_charge = 0.0
 		synchro_pending_by = 0
 		synchro_window_timer = 0.0
-		var hits := 0
-		for c in engine.creeps.duplicate():
-			c["last_hit_by"] = "__p%d_ult__" % initiator
-			var dmg := 140.0 if not bool(c.get("is_boss", false)) else 140.0 + float(c["max_hp"]) * 0.08
-			engine.apply_damage_to_creep(c, dmg, "true")
-			c["stun_timer"] = maxf(float(c.get("stun_timer", 0.0)), 3.0)
-			hits += 1
-		for s in engine.soldiers:
-			s["hp"] = float(s["max_hp"])
-		_suppress_charge = true
-		engine._cleanup_dead_creeps()
-		_suppress_charge = false
-		synchro_unleashed.emit(hits)
-		banner_event.emit("【苍穹双星陨落】命中 %d 名敌人 · 全场冰封 3 秒 · 全军满血！" % hits, Color(1.0, 0.52, 0.96))
-		return {"ok": true, "state": "unleashed", "hits": hits}
+		synchro_committed.emit()
+		_defer_effect(SYNCHRO_IMPACT, _resolve_synchro.bind(initiator))
+		return {"ok": true, "state": "unleashed"}
 	return {"ok": false, "reason": "等待搭档响应中..."}
+
+
+func _resolve_synchro(initiator: int) -> void:
+	var hits := 0
+	for c in engine.creeps:
+		c["last_hit_by"] = "__p%d_ult__" % initiator
+		var dmg := 140.0 if not bool(c.get("is_boss", false)) else 140.0 + float(c["max_hp"]) * 0.08
+		engine.apply_damage_to_creep(c, dmg, "true")
+		c["stun_timer"] = maxf(float(c.get("stun_timer", 0.0)), 3.0)
+		hits += 1
+	for guard in engine.soldiers:
+		guard["hp"] = float(guard["max_hp"])
+	_suppress_charge = true
+	engine._cleanup_dead_creeps()
+	_suppress_charge = false
+	synchro_unleashed.emit(hits)
+	banner_event.emit("双星陨落命中 %d 名敌人 · 全场冰封 3 秒" % hits, Color(1.0, 0.52, 0.96))
 
 
 func send_ping(player_id: int, pos: Vector2, label: String = "支援这里!") -> void:
@@ -1159,9 +1293,63 @@ func get_early_call_bonus() -> int:
 	var base := int(get_next_wave_def().get("early_bonus", 20))
 	if wave_countdown > 0.0:
 		return int(round(float(base) * clampf(wave_countdown / maxf(1.0, countdown_total), 0.0, 1.0)))
-	if wave_dir.is_spawning:
-		return base
 	return 0
+
+
+func get_wave_phase() -> String:
+	if wave_dir.current_wave_index < 0:
+		return "布防"
+	if wave_countdown > 0.0:
+		return "休整"
+	return "交战" if wave_dir.is_spawning else "清尾"
+
+
+func get_arrival_forecast() -> Dictionary:
+	var graph: Dictionary = stage_def.get("graph", {})
+	if graph.is_empty():
+		return {}
+	var arrivals := {}
+	var groups: Array = wave_dir.pending_arrivals()
+	var current := wave_dir.is_spawning
+	if not current:
+		groups = get_next_wave_def().get("groups", [])
+	for group in groups:
+		var lane := str(group["lane_id"])
+		if not graph["spawns"].has(lane):
+			continue
+		var seconds := float(group.get("timer", 0.0)) if current else maxf(0.0, wave_countdown) + float(group.get("delay", 0.0))
+		var entry: Dictionary = arrivals.get(lane, {})
+		if entry.is_empty() or seconds < float(entry["seconds"]):
+			arrivals[lane] = {"pos": graph["nodes"][graph["spawns"][lane]], "seconds": seconds, "enemies": [group["enemy_id"]]}
+		elif is_equal_approx(seconds, float(entry["seconds"])) and not entry["enemies"].has(group["enemy_id"]):
+			entry["enemies"].append(group["enemy_id"])
+	return arrivals
+
+
+func portal_is_active() -> bool:
+	return portal_opened
+
+
+func can_ready_wave() -> bool:
+	return wave_dir.has_next_wave() and not is_defeat() and (
+		wave_dir.current_wave_index < 0 or (wave_countdown > 0.0 and countdown_total - wave_countdown >= MIN_REST)
+	)
+
+
+func request_wave(pid: int) -> Dictionary:
+	if pid != 1 and pid != 2:
+		return {"ok": false, "reason": "无效席位"}
+	if not can_ready_wave():
+		return {"ok": false, "reason": "休整满 5 秒后可提前开波"}
+	if required_ready_seats == 1:
+		return call_next_wave()
+	if ready_seats.has(pid):
+		ready_seats.erase(pid)
+	else:
+		ready_seats[pid] = true
+	if ready_seats.size() == required_ready_seats:
+		return call_next_wave()
+	return {"ok": true}
 
 
 func call_next_wave() -> Dictionary:
@@ -1170,7 +1358,13 @@ func call_next_wave() -> Dictionary:
 	if not wave_dir.has_next_wave():
 		return {"ok": false, "reason": "已无后续波次"}
 	var bonus := get_early_call_bonus()
+	_prepare_next_wave()
+	var wi := wave_dir.current_wave_index + 1
+	for group in wave_dir.waves[wi].get("groups", []):
+		if group["enemy_id"] == "adaptive":
+			group["enemy_id"] = _counter_pick(wi)
 	wave_countdown = -1.0
+	ready_seats.clear()
 	var res := wave_dir.start_next_wave()
 	if not bool(res["ok"]):
 		return res
@@ -1187,10 +1381,36 @@ func call_next_wave() -> Dictionary:
 	return res
 
 
-func _on_wave_spawning_finished(_wi: int) -> void:
-	if wave_dir.has_next_wave() or endless:
-		wave_countdown = countdown_total
-		countdown_started.emit(countdown_total)
+func _prepare_next_wave() -> void:
+	var wi := wave_dir.current_wave_index + 1
+	if wi == _wave_prepared or not wave_dir.has_next_wave():
+		return
+	_wave_prepared = wi
+	var possible := spawn_ids.duplicate()
+	possible.erase("portal")
+	for group in wave_dir.waves[wi].get("groups", []):
+		if group["lane_id"] == "random" and not possible.is_empty():
+			group["lane_id"] = possible[rng.randi_range(0, possible.size() - 1)]
+
+
+func _open_recovery() -> void:
+	if wave_countdown > 0.0 or wave_dir.current_wave_index < 0 or wave_dir.is_spawning or not wave_dir.has_next_wave():
+		return
+	if engine.creeps.size() > 2:
+		return
+	for c in engine.creeps:
+		var def := CreepCatalog.get_def(str(c["enemy_id"]))
+		if bool(c.get("is_boss", false)) or def.has("siege") or def.has("kamikaze") or str(def.get("ability", "")) == "split":
+			return
+	_prepare_next_wave()
+	var next := get_next_wave_def()
+	var rest := float(next.get("rest", 15.0))
+	for group in next.get("groups", []):
+		if CreepCatalog.is_boss(str(group["enemy_id"])):
+			rest = maxf(rest, 21.0)
+	countdown_total = rest + (3.0 if difficulty == "casual" else (-3.0 if difficulty == "hard" else 0.0))
+	wave_countdown = countdown_total
+	countdown_started.emit(countdown_total)
 
 
 func _ensure_endless_queue() -> void:
@@ -1201,6 +1421,8 @@ func _ensure_endless_queue() -> void:
 ## Procedural endless wave: rotates themed rosters across all lanes; boss every 5th wave.
 func generate_endless_wave(index: int) -> Dictionary:
 	var lane_ids: Array[String] = spawn_ids.duplicate()
+	var has_portal := lane_ids.has("portal")
+	lane_ids.erase("portal")
 	var themes := [
 		["slime", "wolf"], ["goblin", "shield_bearer"], ["bat", "gargoyle"], ["splitter", "shaman"],
 		["assassin", "wolf"], ["shield_bearer", "shaman"], ["gargoyle", "assassin"], ["goblin", "splitter"],
@@ -1210,6 +1432,8 @@ func generate_endless_wave(index: int) -> Dictionary:
 	var count := 4 + int(index / 2)
 	for li in range(lane_ids.size()):
 		groups.append({"enemy_id": theme[li % theme.size()], "lane_id": lane_ids[li], "count": count, "interval": maxf(0.45, 0.9 - 0.02 * index)})
+	if has_portal and index % 3 == 1:
+		groups.append({"enemy_id": theme[0], "lane_id": "portal", "count": maxi(3, count / 2), "interval": 0.75, "delay": 7.0})
 	if index % 5 == 4:
 		var bosses := ["boss_warlord", "boss_frost_colossus", "boss_obsidian"]
 		groups.append({"enemy_id": bosses[int(index / 5) % bosses.size()], "lane_id": lane_ids[index % lane_ids.size()], "count": 1, "interval": 1.0, "delay": 2.0})
@@ -1247,13 +1471,14 @@ func execute_command(cmd: Dictionary) -> Dictionary:
 			send_ping(pid, Vector2(float(cmd.get("x", 240.0)), float(cmd.get("y", 136.0))), str(cmd.get("label", "支援!")))
 			return {"ok": true}
 		"call_wave":
-			return call_next_wave()
+			return request_wave(pid)
 		_:
 			return {"ok": false, "reason": "未知指令"}
 
 
 func tick(delta: float) -> void:
 	elapsed += delta
+	_land_effects()
 	if wave_countdown > 0.0:
 		wave_countdown -= delta
 		if wave_countdown <= 0.0:
@@ -1274,6 +1499,7 @@ func tick(delta: float) -> void:
 	_tick_tower_regen(delta)
 	engine.tick(delta)
 	_tick_reroute()
+	_open_recovery()
 	if synchro_pending_by != 0:
 		synchro_window_timer -= delta
 		if synchro_window_timer <= 0.0:

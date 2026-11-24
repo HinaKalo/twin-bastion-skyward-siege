@@ -31,6 +31,7 @@ var world_size: Vector2 = Vector2(480, 270)
 var road_polys: Array = []
 var view_rect: Rect2 = Rect2()
 var alerts: Array = [] # [{pos, ttl}]
+var arrival_forecast: Dictionary = {}
 
 var _t: float = 0.0
 var _top: _Strip
@@ -157,6 +158,11 @@ func _draw_minimap(c: Control) -> void:
 		c.draw_polyline(pts, Color(0.62, 0.52, 0.36, 0.9), 1.0)
 	var gate: Vector2 = TerrainBaker.gate_pos(director.stage_def) * k
 	c.draw_rect(Rect2(gate - Vector2(2, 3), Vector2(4, 6)), UIKit.GOLD)
+	for lane in arrival_forecast:
+		var entry: Dictionary = arrival_forecast[lane]
+		var p := (entry["pos"] as Vector2) * k
+		var col := UIKit.BAD if lane == "portal" or float(entry["seconds"]) <= 5.0 else UIKit.GOLD
+		c.draw_arc(p, 3.0 + 0.5 * sin(_t * 6.0), 0.0, TAU, 10, col, 1.0)
 	for pad in director.pads:
 		if bool(pad.get("ruin", false)) and not director.pad_to_tower_uid.has(str(pad["id"])):
 			c.draw_rect(Rect2((pad["pos"] as Vector2) * k - Vector2(1, 1), Vector2(2, 2)), Color(0.45, 0.45, 0.48))
@@ -267,24 +273,29 @@ func _draw_dock(c: Control) -> void:
 	# Call wave
 	var wr := Rect2(72, 3, 66, 16)
 	var has_next := director.wave_dir.has_next_wave() or director.endless
-	var label := "开战"
+	var can_ready := director.can_ready_wave()
+	var label := "开战" if director.required_ready_seats == 1 else "就绪"
 	if director.wave_dir.current_wave_index >= 0:
 		if not has_next:
 			label = "最终波"
 		elif director.wave_countdown > 0.0:
-			label = "%ds" % ceili(director.wave_countdown)
+			label = "休整 %ds" % ceili(director.wave_countdown)
 		else:
-			label = "召唤"
-	_button_bg(c, wr, Color(0.80, 0.34, 0.22), "call_wave", has_next)
+			label = director.get_wave_phase()
+	_button_bg(c, wr, Color(0.80, 0.34, 0.22), "call_wave", can_ready)
 	PixelIcons.draw_icon(c, "play", wr.position + Vector2(8, 8), 1, Color.WHITE if has_next else Color(0.5, 0.5, 0.5))
 	UIKit.draw_text(c, wr.position + Vector2(14, 11), label, 7, UIKit.TEXT if has_next else UIKit.TEXT_DIM)
 	var bonus := director.get_early_call_bonus()
-	if bonus > 0:
-		UIKit.draw_text(c, wr.position + Vector2(36, 11), "+%d" % bonus, 6, UIKit.GOLD)
+	if director.required_ready_seats == 2 and (can_ready or director.wave_countdown > 0.0):
+		for pid in [1, 2]:
+			var pos := wr.end - Vector2(19 - pid * 6, 11)
+			c.draw_rect(Rect2(pos, Vector2(4, 5)), UIKit.pcol(pid) if director.ready_seats.has(pid) else UIKit.TEXT_DIM.darkened(0.4))
+	elif bonus > 0 and can_ready:
+		UIKit.draw_text(c, wr.position + Vector2(46, 11), "+%d" % bonus, 6, UIKit.GOLD)
 	if director.wave_countdown > 0.0:
 		var frac := director.wave_countdown / maxf(1.0, director.countdown_total)
 		c.draw_rect(Rect2(wr.position.x + 1, wr.end.y - 2, (wr.size.x - 2) * frac, 1), UIKit.GOLD)
-	_register("dock", "call_wave", wr, has_next)
+	_register("dock", "call_wave", wr, can_ready)
 
 	# Synchro gauge
 	var gr := Rect2(144, 4, 168, 14)
